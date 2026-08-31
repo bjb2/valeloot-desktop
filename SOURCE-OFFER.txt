@@ -1,0 +1,22 @@
+Corresponding Source offer
+==========================
+
+This binary release is accompanied by its machine-readable Corresponding
+Source in the `source/` directory of the same archive, under the GNU Affero
+General Public License, version 3 or later. That directory includes the
+ValeLoot Desktop source, exact dependency manifest and lockfile, Neutralino
+configuration, and the scripts used to build and package this release.
+
+To rebuild, use Windows x64 with Bun 1.4 or newer and Npcap installed, then run:
+
+    bun run setup
+    bun run check
+    bun run package
+
+The AGPL-licensed @kar-mi Spirit Vale Tools dependencies are identified and
+version-pinned in source/package.json and source/bun.lock. Their source is
+published at https://github.com/kar-mi/spirit-vale-tools; `bun install` in
+source/ retrieves the pinned package source from the Bun/npm registry.
+
+No Npcap executable, driver, or installer is included. Npcap remains a
+separately obtained component from https://npcap.com/.

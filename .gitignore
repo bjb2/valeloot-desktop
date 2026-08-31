@@ -1,0 +1,10 @@
+node_modules/
+dist/
+bin/
+.neu/
+resources/
+extensions/
+data/
+*.log
+*.zip
+.DS_Store

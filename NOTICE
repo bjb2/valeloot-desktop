@@ -1,0 +1,22 @@
+ValeLoot Desktop notices
+========================
+
+ValeLoot Desktop is distributed under the GNU Affero General Public License,
+version 3 or later. See LICENSE.
+
+The release contains Bun-bundled code that depends on these packages:
+
+- @kar-mi/spirit-vale-tools-capture 2.7.0 — AGPL-3.0-only
+- @kar-mi/spirit-vale-tools-items 0.1.9 — AGPL-3.0-only
+- @kar-mi/spirit-vale-tools-market 2.0.0 — AGPL-3.0-only
+- @neutralinojs/lib 6.9.0 — MIT
+- preact 10.29.7 — MIT
+
+The AGPL-licensed Spirit Vale Tools package source is published at
+https://github.com/kar-mi/spirit-vale-tools (capture: packages/capture;
+items: packages/items; market: packages/market). The release's source/
+directory contains the application Corresponding Source, its exact package
+manifest and lockfile, and the build and packaging scripts.
+Run `bun install` in source/ to retrieve the pinned package sources from the
+Bun/npm registry. Npcap is not included in this release; obtain its separate
+license and installer from https://npcap.com/.

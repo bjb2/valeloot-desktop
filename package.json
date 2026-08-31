@@ -1,0 +1,40 @@
+{
+  "name": "valeloot-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Passive Npcap desktop loot filter for Spirit Vale",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bjb2/valeloot-desktop.git"
+  },
+  "homepage": "https://github.com/bjb2/valeloot-desktop#readme",
+  "bugs": "https://github.com/bjb2/valeloot-desktop/issues",
+  "type": "module",
+  "scripts": {
+    "setup": "bun install && neu update",
+    "prepare": "bun run src/build.ts",
+    "dev": "bun run prepare && neu build && neu run",
+    "build": "bun run prepare && neu build",
+    "package": "bun run prepare && neu build --clean --release && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run typecheck && bun test"
+  },
+  "dependencies": {
+    "@kar-mi/spirit-vale-tools-capture": "2.7.0",
+    "@kar-mi/spirit-vale-tools-items": "0.1.9",
+    "@kar-mi/spirit-vale-tools-market": "2.0.0",
+    "@neutralinojs/lib": "6.9.0",
+    "preact": "10.29.7"
+  },
+  "devDependencies": {
+    "@neutralinojs/neu": "11.7.2",
+    "@types/bun": "1.4.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "packageManager": "bun@1.4.0"
+}
