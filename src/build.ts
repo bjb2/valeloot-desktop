@@ -30,6 +30,7 @@ await Promise.all([
   copyFile(path.join(root, "src", "frontend", "index.html"), path.join(viewOutput, "index.html")),
   copyFile(path.join(root, "src", "frontend", "index.css"), path.join(viewOutput, "index.css")),
   copyFile(path.join(root, "assets", "catalog.json"), path.join(extensionOutput, "catalog.json")),
+  copyFile(path.join(root, "docs", "starter-ruleset.txt"), path.join(extensionOutput, "starter-ruleset.txt")),
   cp(path.join(root, "assets", "icons"), path.join(extensionOutput, "icons"), { recursive: true }),
   copyFile(process.execPath, path.join(binaryOutput, "bun.exe")),
 ]);

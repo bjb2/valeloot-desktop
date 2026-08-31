@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
   "applicationId": "dev.spiritvale.valeloot",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "applicationName": "ValeLoot Desktop",
   "author": "ValeLoot",
   "description": "Standalone passive Spirit Vale loot alerts for Windows",

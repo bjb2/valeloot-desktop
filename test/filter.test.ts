@@ -3,6 +3,14 @@ import { parseLootFilter } from "../src/core/filter/loot-dsl.ts";
 import { matchLoot } from "../src/core/filter/loot-filter.ts";
 test("canonical parser preserves exclusive stat semantics", () => { const parsed = parseLootFilter('Show "strict"\n  Stat Str > 3'); expect(parsed.errors).toEqual([]); const item = { uid: "x", itemId: "x", name: "x", slotType: "Dagger", refine: 0, lines: [{ stat: "Str", base: 3, rollPct: 100, isChaos: false, over: false }], topRolls: 0, highRolls: 1, avgRollPct: 100, favorite: false, hasChaos: false }; expect(matchLoot(item, parsed.rules, { threshold: 90 })).toBeNull(); });
 test("bad filter lines reject their rule", () => { expect(parseLootFilter("Show x\n  Protect y").errors).not.toEqual([]); });
+test("shipped starter ruleset is a valid 28-rule filter", async () => {
+  const text = await Bun.file(new URL("../docs/starter-ruleset.txt", import.meta.url)).text();
+  const parsed = parseLootFilter(text);
+  expect(parsed.errors).toEqual([]);
+  expect(parsed.rules).toHaveLength(28);
+  expect(parsed.threshold).toBe(90);
+});
+
 test("visual equipment smoke rules parse with distinct treatments and sounds", () => {
   const parsed = parseLootFilter(`Show "Accessories — holo glow"
   Type Accessory, Back, Eyewear

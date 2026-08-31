@@ -22,6 +22,13 @@ type Persisted = {
 };
 
 const root = path.resolve(import.meta.dir, "../..");
+const applicationVersion = (() => {
+  const config = JSON.parse(readFileSync(path.join(root, "neutralino.config.json"), "utf8")) as { version?: unknown };
+  if (typeof config.version !== "string" || !config.version) {
+    throw new Error("neutralino.config.json does not contain an application version.");
+  }
+  return config.version;
+})();
 const portable = existsSync(path.join(root, ".valeloot-portable"));
 const dataDirectory = portable
   ? path.join(root, "data")
@@ -31,6 +38,10 @@ const soundsDirectory = path.join(dataDirectory, "sounds");
 const iconDirectory = existsSync(path.join(import.meta.dir, "icons"))
   ? path.join(import.meta.dir, "icons")
   : path.join(root, "assets", "icons");
+const starterFilterPath = existsSync(path.join(import.meta.dir, "starter-ruleset.txt"))
+  ? path.join(import.meta.dir, "starter-ruleset.txt")
+  : path.join(root, "docs", "starter-ruleset.txt");
+const starterFilter = readFileSync(starterFilterPath, "utf8");
 const profileNamePattern = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$/;
 mkdirSync(soundsDirectory, { recursive: true });
 
@@ -39,9 +50,9 @@ function defaultSettings(): Persisted {
     enabled: true,
     soundsEnabled: true,
     deviceName: null,
-    filter: "",
+    filter: starterFilter,
     active: "Default",
-    profiles: { Default: "" },
+    profiles: { Default: starterFilter },
   };
 }
 
@@ -204,7 +215,7 @@ async function restartCapture(): Promise<void> {
 function currentState(): DesktopState {
   const stateWarning = warning;
   return {
-    version: "0.1.0",
+    version: applicationVersion,
     enabled: persisted.enabled,
     soundsEnabled: persisted.soundsEnabled,
     deviceName: persisted.deviceName,

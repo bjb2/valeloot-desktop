@@ -24,8 +24,10 @@ $backend = Join-Path $extensions 'backend/index.js'
 $bun = Join-Path $extensions 'bin/bun.exe'
 $catalog = Join-Path $extensions 'backend/catalog.json'
 $icons = Join-Path $extensions 'backend/icons'
+$starterSource = Join-Path $root 'docs/starter-ruleset.txt'
+$starterFilter = Join-Path $extensions 'backend/starter-ruleset.txt'
 
-$expectedFiles = @($binary, $resources, $releaseConfig, $portable, $backend, $catalog, $bun)
+$expectedFiles = @($binary, $resources, $releaseConfig, $portable, $backend, $catalog, $bun, $starterSource, $starterFilter)
 foreach ($file in $expectedFiles) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
         throw "Expected release output is missing: $file. Run 'bun run prepare && neu build --clean --release'."
@@ -85,6 +87,7 @@ Copy-Item -LiteralPath $extensions -Destination $stage -Recurse
 foreach ($legalFile in @('LICENSE', 'NOTICE', 'SOURCE-OFFER.txt')) {
     Copy-Item -LiteralPath (Join-Path $root $legalFile) -Destination $stage
 }
+Copy-Item -LiteralPath $starterSource -Destination (Join-Path $stage 'starter-ruleset.txt')
 
 $sourceStage = Join-Path $stage 'source'
 New-Item -ItemType Directory -Path $sourceStage | Out-Null

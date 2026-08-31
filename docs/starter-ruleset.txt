@@ -1,0 +1,360 @@
+# =====================================================================
+# VALELOOT — CATEGORY GENERAL DEFAULT
+#
+# A focused 28-rule cut of the former 94-rule consolidated filter.
+# FIRST MATCH WINS. Keep the tier bands and GENERAL fallbacks in order.
+#
+# Display language:
+#   4+ top  rotating holo background, no frame, glow + alert
+#   3 top   flat full-card background, no frame, glow + chime
+#   2 top   flat full-card background, no frame, mark
+#   1 top   coloured frame only, quiet dot
+# =====================================================================
+
+Threshold 90
+
+# Exceptional items beat every category.
+Show "Chaos over-roll"
+    OverRoll
+    Tag        OVER
+    Color      #ffd166
+    Highlight  glow
+    Background holo
+    Border     off
+    Sound      alert
+
+Show "Favourites"
+    Favorite
+    Tag        FAV
+    Color      #facc15
+    Highlight  glow
+    Background fill
+    Border     off
+
+# Artifacts require a top +3 primary attribute, then split by total top rolls.
+Show "Artifact — perfect"
+    Type        Artifact
+    TopRolls   >= 3
+    AnyOf
+        Stat    Str >= 3
+        Stat    Vit >= 3
+        Stat    Dex >= 3
+        Stat    Agi >= 3
+        Stat    Int >= 3
+        Stat    Luk >= 3
+    Tag         ART-P
+    Color       #f4d35e
+    Highlight   glow
+    Background  holo
+    Border      off
+    Sound       alert
+
+Show "Artifact — semi"
+    Type        Artifact
+    TopRolls   >= 2
+    AnyOf
+        Stat    Str >= 3
+        Stat    Vit >= 3
+        Stat    Dex >= 3
+        Stat    Agi >= 3
+        Stat    Int >= 3
+        Stat    Luk >= 3
+    Tag         ART-S
+    Color       #d9a441
+    Highlight   mark
+    Background  fill
+    Border      off
+
+Hide "Artifact trash"
+    Type        Artifact
+
+# A required physical group plus a required magic group replaces dozens of pair rules.
+Hide "Mixed physical + magic"
+    AnyOf
+        Stat    AtkMult >= 2
+        Stat    DamageMelee >= 5
+        Stat    Atk >= 3
+        Stat    Crit >= 5
+        Stat    Hit >= 10
+        Stat    CritDamage >= 10
+        Stat    Chain >= 1
+        Stat    DoubleAttack >= 20
+        Stat    DamageRanged >= 5
+        Stat    Range >= 1
+    AnyOf
+        Stat    DamageMagic >= 5
+        Stat    MatkMult >= 2
+        Stat    CastSpd >= 10
+        Stat    Matk >= 3
+        Stat    Healing >= 10
+        Stat    CastRange >= 1
+
+# 4+ TOP — rotating, borderless, unmistakable.
+Show "ATK — 4+ top"
+    Stat        AtkMult >= 2
+    Stat        DamageMelee >= 5
+    Stat        Atk >= 3
+    Stat        Crit >= 5
+    Stat        Hit >= 10
+    Stat        CritDamage >= 10
+    Stat        Chain >= 1
+    Stat        DoubleAttack >= 20
+    Stat        DamageRanged >= 5
+    Stat        Range >= 1
+    StatMatches >= 2
+    TopRolls   >= 4
+    Tag         ATK-4
+    Color       #ff5a5f
+    Highlight   glow
+    Background  holo
+    Border      off
+    Sound       alert
+
+Show "MAGIC — 4+ top"
+    Stat        DamageMagic >= 5
+    Stat        MatkMult >= 2
+    Stat        CastSpd >= 10
+    Stat        Matk >= 3
+    Stat        Healing >= 10
+    Stat        CastRange >= 1
+    StatMatches >= 2
+    TopRolls   >= 4
+    Tag         MAG-4
+    Color       #2fb8ff
+    Highlight   glow
+    Background  holo
+    Border      off
+    Sound       alert
+
+Show "DEF — 4+ top"
+    Stat        Def >= 5
+    Stat        DefMult >= 5
+    Stat        Flee >= 15
+    StatMatches >= 2
+    TopRolls   >= 4
+    Tag         DEF-4
+    Color       #52d273
+    Highlight   glow
+    Background  holo
+    Border      off
+    Sound       alert
+
+Show "MDEF — 4+ top"
+    Stat        Mdef >= 5
+    Stat        MdefMult >= 5
+    StatMatches >= 2
+    TopRolls   >= 4
+    Tag         MDF-4
+    Color       #a86cff
+    Highlight   glow
+    Background  holo
+    Border      off
+    Sound       alert
+
+Show "GENERAL — 4+ top"
+    TopRolls   >= 4
+    Tag         GEN-4
+    Color       #e6efe9
+    Highlight   glow
+    Background  holo
+    Border      off
+    Sound       alert
+
+# 3 TOP — flat full-card colour, no frame.
+Show "ATK — 3 top"
+    Stat        AtkMult >= 2
+    Stat        DamageMelee >= 5
+    Stat        Atk >= 3
+    Stat        Crit >= 5
+    Stat        Hit >= 10
+    Stat        CritDamage >= 10
+    Stat        Chain >= 1
+    Stat        DoubleAttack >= 20
+    Stat        DamageRanged >= 5
+    Stat        Range >= 1
+    StatMatches >= 2
+    TopRolls   >= 3
+    Tag         ATK-3
+    Color       #ff5a5f
+    Highlight   glow
+    Background  fill
+    Border      off
+    Sound       chime
+
+Show "MAGIC — 3 top"
+    Stat        DamageMagic >= 5
+    Stat        MatkMult >= 2
+    Stat        CastSpd >= 10
+    Stat        Matk >= 3
+    Stat        Healing >= 10
+    Stat        CastRange >= 1
+    StatMatches >= 2
+    TopRolls   >= 3
+    Tag         MAG-3
+    Color       #2fb8ff
+    Highlight   glow
+    Background  fill
+    Border      off
+    Sound       chime
+
+Show "DEF — 3 top"
+    Stat        Def >= 5
+    Stat        DefMult >= 5
+    Stat        Flee >= 15
+    StatMatches >= 2
+    TopRolls   >= 3
+    Tag         DEF-3
+    Color       #52d273
+    Highlight   glow
+    Background  fill
+    Border      off
+    Sound       chime
+
+Show "MDEF — 3 top"
+    Stat        Mdef >= 5
+    Stat        MdefMult >= 5
+    StatMatches >= 2
+    TopRolls   >= 3
+    Tag         MDF-3
+    Color       #a86cff
+    Highlight   glow
+    Background  fill
+    Border      off
+    Sound       chime
+
+Show "GENERAL — 3 top"
+    TopRolls   >= 3
+    Tag         GEN-3
+    Color       #c7d0dc
+    Highlight   glow
+    Background  fill
+    Border      off
+    Sound       chime
+
+# 2 TOP — flat full-card colour, quieter mark.
+Show "ATK — 2 top"
+    Stat        AtkMult >= 2
+    Stat        DamageMelee >= 5
+    Stat        Atk >= 3
+    Stat        Crit >= 5
+    Stat        Hit >= 10
+    Stat        CritDamage >= 10
+    Stat        Chain >= 1
+    Stat        DoubleAttack >= 20
+    Stat        DamageRanged >= 5
+    Stat        Range >= 1
+    StatMatches >= 2
+    TopRolls   >= 2
+    Tag         ATK-2
+    Color       #ff5a5f
+    Highlight   mark
+    Background  fill
+    Border      off
+
+Show "MAGIC — 2 top"
+    Stat        DamageMagic >= 5
+    Stat        MatkMult >= 2
+    Stat        CastSpd >= 10
+    Stat        Matk >= 3
+    Stat        Healing >= 10
+    Stat        CastRange >= 1
+    StatMatches >= 2
+    TopRolls   >= 2
+    Tag         MAG-2
+    Color       #2fb8ff
+    Highlight   mark
+    Background  fill
+    Border      off
+
+Show "DEF — 2 top"
+    Stat        Def >= 5
+    Stat        DefMult >= 5
+    Stat        Flee >= 15
+    StatMatches >= 2
+    TopRolls   >= 2
+    Tag         DEF-2
+    Color       #52d273
+    Highlight   mark
+    Background  fill
+    Border      off
+
+Show "MDEF — 2 top"
+    Stat        Mdef >= 5
+    Stat        MdefMult >= 5
+    StatMatches >= 2
+    TopRolls   >= 2
+    Tag         MDF-2
+    Color       #a86cff
+    Highlight   mark
+    Background  fill
+    Border      off
+
+Show "GENERAL — 2 top"
+    TopRolls   >= 2
+    Tag         GEN-2
+    Color       #9aa8a0
+    Highlight   mark
+    Background  fill
+    Border      off
+
+# 1 TOP — quiet frame-only potential. Category rules precede GENERAL.
+Show "ATK — 1 top"
+    Stat        AtkMult >= 2
+    Stat        DamageMelee >= 5
+    Stat        Atk >= 3
+    Stat        Crit >= 5
+    Stat        Hit >= 10
+    Stat        CritDamage >= 10
+    Stat        Chain >= 1
+    Stat        DoubleAttack >= 20
+    Stat        DamageRanged >= 5
+    Stat        Range >= 1
+    StatMatches >= 1
+    TopRolls   >= 1
+    Tag         ATK-1
+    Color       #ff5a5f
+
+Show "MAGIC — 1 top"
+    Stat        DamageMagic >= 5
+    Stat        MatkMult >= 2
+    Stat        CastSpd >= 10
+    Stat        Matk >= 3
+    Stat        Healing >= 10
+    Stat        CastRange >= 1
+    StatMatches >= 1
+    TopRolls   >= 1
+    Tag         MAG-1
+    Color       #2fb8ff
+
+Show "DEF — 1 top"
+    Stat        Def >= 5
+    Stat        DefMult >= 5
+    Stat        Flee >= 15
+    StatMatches >= 1
+    TopRolls   >= 1
+    Tag         DEF-1
+    Color       #52d273
+
+Show "MDEF — 1 top"
+    Stat        Mdef >= 5
+    Stat        MdefMult >= 5
+    StatMatches >= 1
+    TopRolls   >= 1
+    Tag         MDF-1
+    Color       #a86cff
+
+Show "GENERAL — 1 top"
+    TopRolls   >= 1
+    Tag         GEN-1
+    Color       #7f8b85
+
+# Work already invested remains visible even when no line is top-rolled.
+Show "Refined work"
+    Refine     >= 5
+    Tag         +5
+    Color       #ff9f6b
+    Highlight   mark
+    Background  fill
+    Border      off
+
+Hide "everything"
