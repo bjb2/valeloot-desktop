@@ -1,6 +1,6 @@
 {
   "name": "valeloot-desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Passive cross-platform Spirit Vale loot filter",
   "desktopName": "valeloot-desktop",
@@ -18,9 +18,9 @@
     "prepare": "bun run src/build.ts",
     "dev": "bun run prepare && electron .",
     "build": "bun run prepare",
-    "package": "bun run prepare && electron-builder",
-    "package:win": "bun run prepare && electron-builder --win portable",
-    "package:linux": "bun run prepare && electron-builder --linux AppImage",
+    "package": "bun run prepare && electron-builder --publish never",
+    "package:win": "bun run prepare && electron-builder --win portable --publish never",
+    "package:linux": "bun run prepare && electron-builder --linux AppImage --publish never",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run typecheck && bun test"
