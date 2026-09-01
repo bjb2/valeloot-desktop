@@ -26,20 +26,29 @@ settings but cannot observe inventory traffic.
 
 Requirements:
 
-- x86-64 Linux with FUSE support for AppImage
-- libpcap and a distribution-configured `dumpcap` helper
+- x86-64 Linux with libpcap
 - Spirit Vale running through Wine or Proton
 
-Install your distribution's libpcap and Wireshark/dumpcap packages, configure
-dumpcap for non-root packet capture, then sign out and back in so the group
-change takes effect. On Debian or Ubuntu, install `libpcap0.8` and
-`wireshark-common`, allow non-superusers to capture when prompted, and add your
-account to the `wireshark` group.
+For direct capture, download the `.deb` or `.rpm` release and install it with
+your package manager:
 
-Download `ValeLoot-Desktop-<version>-linux-x86_64.AppImage`, make it executable,
-and run it as your normal user. **Do not run the AppImage with `sudo`.** If
-dumpcap is unavailable, ValeLoot tries direct libpcap capture and reports the
-required `CAP_NET_RAW` and `CAP_NET_ADMIN` capabilities when access is denied.
+```sh
+sudo apt install ./ValeLoot-Desktop-<version>-linux-amd64.deb
+# or
+sudo dnf install ./ValeLoot-Desktop-<version>-linux-x86_64.rpm
+```
+
+The native package installs a root-owned Bun collector runtime with
+`CAP_NET_RAW` and `CAP_NET_ADMIN`; run ValeLoot itself as your normal user.
+
+The AppImage remains available for portable use, but AppImage files cannot
+carry usable Linux file capabilities. AppImage users need FUSE plus a
+distribution-configured `dumpcap` helper. Install your distribution's libpcap
+and Wireshark/dumpcap packages, configure dumpcap for non-root packet capture,
+then sign out and back in so the group change takes effect. On Debian or Ubuntu,
+install `libpcap0.8` and `wireshark-common`, allow non-superusers to capture when
+prompted, and add your account to the `wireshark` group. Run the AppImage as
+your normal user; **do not run it with `sudo`.**
 
 The app keeps settings and profiles in the operating system's application-data
 directory. To keep data beside the executable or AppImage, place an empty
@@ -270,6 +279,8 @@ The package commands write:
 ```text
 dist/ValeLoot-Desktop-<version>-windows-x64.exe
 dist/ValeLoot-Desktop-<version>-linux-x86_64.AppImage
+dist/ValeLoot-Desktop-<version>-linux-amd64.deb
+dist/ValeLoot-Desktop-<version>-linux-x86_64.rpm
 ```
 
 ### Useful commands
@@ -279,7 +290,7 @@ bun run dev             Prepare and launch an Electron development window
 bun run build           Build the renderer, collector, and Electron shell
 bun run check           Run TypeScript checks and tests
 bun run package:win     Build the Windows x64 portable executable
-bun run package:linux   Build the Linux x64 AppImage
+bun run package:linux   Build the Linux x64 AppImage, DEB, and RPM
 ```
 
 Generated `build/`, `dist/`, and installed dependencies are ignored by Git.
