@@ -33,7 +33,10 @@ jobs:
           - os: ubuntu-latest
             script: package:linux
             artifact: linux-x64
-            files: dist/*.AppImage
+            files: |
+              dist/*.AppImage
+              dist/*.deb
+              dist/*.rpm
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -41,7 +44,20 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes binutils rpm xz-utils
       - run: bun run ${{ matrix.script }}
+      - name: Verify Linux package capabilities
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get install --yes ./dist/*.deb
+          runtime='/opt/ValeLoot Desktop/resources/collector/bin/bun'
+          getcap "$runtime" | grep -F 'cap_net_admin,cap_net_raw=eip'
+          rpm -qp --requires ./dist/*.rpm | grep -Fx 'libcap'
+          rpm -qp --requires ./dist/*.rpm | grep -Fx 'libpcap'
+          rpm -qp --scripts ./dist/*.rpm | grep -F "setcap 'cap_net_raw,cap_net_admin=eip'"
       - uses: actions/upload-artifact@v4
         with:
           name: valeloot-${{ matrix.artifact }}

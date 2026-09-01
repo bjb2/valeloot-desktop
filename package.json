@@ -1,6 +1,6 @@
 {
   "name": "valeloot-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Passive cross-platform Spirit Vale loot filter",
   "desktopName": "valeloot-desktop",
@@ -20,7 +20,7 @@
     "build": "bun run prepare",
     "package": "bun run prepare && electron-builder --publish never",
     "package:win": "bun run prepare && electron-builder --win portable --publish never",
-    "package:linux": "bun run prepare && electron-builder --linux AppImage --publish never",
+    "package:linux": "bun run prepare && electron-builder --linux AppImage deb rpm --publish never",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run typecheck && bun test"
@@ -74,9 +74,18 @@
     },
     "linux": {
       "syncDesktopName": true,
-      "target": ["AppImage"],
+      "target": ["AppImage", "deb", "rpm"],
       "category": "Utility",
+      "maintainer": "bjb2 <bjb2@users.noreply.github.com>",
       "artifactName": "ValeLoot-Desktop-${version}-linux-${arch}.${ext}"
+    },
+    "deb": {
+      "afterInstall": "assets/linux/after-install.tpl",
+      "fpm": ["--depends", "libcap2-bin", "--depends", "libpcap0.8"]
+    },
+    "rpm": {
+      "afterInstall": "assets/linux/after-install.tpl",
+      "fpm": ["--depends", "libcap", "--depends", "libpcap"]
     }
   }
 }
