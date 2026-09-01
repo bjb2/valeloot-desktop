@@ -2,9 +2,27 @@ import { getNpcapStatus, listNpcapDevices, PacketCapture } from "@kar-mi/spirit-
 import type { CaptureBackendStatus, CaptureDeviceRecord } from "./linux-pcap.ts";
 import { LinuxPcapRuntime } from "./linux-pcap.ts";
 import { LinuxTargetSnapshotProvider } from "./linux-target-provider.ts";
+import type { LinuxCaptureMode } from "../../shared/contracts.ts";
 
-const linuxRuntime = new LinuxPcapRuntime();
+let linuxCaptureMode: LinuxCaptureMode = "auto";
+let linuxRuntime = new LinuxPcapRuntime(linuxCaptureMode);
 const linuxTargetProvider = new LinuxTargetSnapshotProvider();
+
+/**
+ * Update the Linux capture mode. Returns true if the mode changed (indicating
+ * that capture should be restarted to take effect).
+ */
+export function setLinuxCaptureMode(mode: LinuxCaptureMode): boolean {
+  if (mode === linuxCaptureMode) return false;
+  linuxCaptureMode = mode;
+  // Recreate the runtime so the cached readyStatus is cleared and the new mode is applied.
+  linuxRuntime = new LinuxPcapRuntime(mode);
+  return true;
+}
+
+export function getLinuxCaptureMode(): LinuxCaptureMode {
+  return linuxCaptureMode;
+}
 
 export async function getCaptureStatus(): Promise<CaptureBackendStatus> {
   if (process.platform === "linux") return linuxRuntime.status();
@@ -32,5 +50,10 @@ export function createPacketCapture(): PacketCapture {
 }
 
 export function captureBackendName(): string {
-  return process.platform === "linux" ? "libpcap" : process.platform === "win32" ? "Npcap" : "Packet capture";
+  if (process.platform === "linux") {
+    if (linuxCaptureMode === "dumpcap") return "dumpcap";
+    if (linuxCaptureMode === "libpcap") return "libpcap (direct)";
+    return "libpcap";
+  }
+  return process.platform === "win32" ? "Npcap" : "Packet capture";
 }

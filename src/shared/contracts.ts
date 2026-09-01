@@ -72,11 +72,14 @@ export interface AlertHistoryView {
   note: string;
 }
 
+export type LinuxCaptureMode = "auto" | "libpcap" | "dumpcap";
+
 export interface DesktopState {
   version: string;
   enabled: boolean;
   soundsEnabled: boolean;
   deviceName: string | null;
+  linuxCaptureMode: LinuxCaptureMode;
   phase: CollectorPhase;
   detail: string;
   capture: {
@@ -112,6 +115,7 @@ export interface DesktopSettingsUpdate {
   enabled?: boolean;
   soundsEnabled?: boolean;
   deviceName?: string | null;
+  linuxCaptureMode?: LinuxCaptureMode;
 }
 
 export type ProfileCommand =
