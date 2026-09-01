@@ -10,6 +10,7 @@ export interface CaptureDevice {
   description: string;
   addresses: string[];
   loopback: boolean;
+  automaticCandidate?: boolean;
 }
 
 export interface LootLine {
@@ -80,6 +81,12 @@ export interface DesktopState {
   soundsEnabled: boolean;
   deviceName: string | null;
   linuxCaptureMode: LinuxCaptureMode;
+  captureAdapter?: {
+    name: string;
+    description: string;
+    selection: "automatic" | "manual";
+    automaticCandidate: boolean;
+  };
   phase: CollectorPhase;
   detail: string;
   capture: {
@@ -90,6 +97,8 @@ export interface DesktopState {
   };
   gameDetected: boolean;
   packetsObserved: number;
+  lastAttributedPacketAt?: string;
+  automaticCaptureRestarts: number;
   snapshotsDecoded: number;
   partialSnapshots: number;
   duplicateSnapshots: number;

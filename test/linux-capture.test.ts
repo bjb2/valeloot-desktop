@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import {
   findDumpcap,
+  normalizeCapturedFrame,
   normalizeDataLinkForPacketCapture,
   PcapStreamDecoder,
 } from "../src/backend/capture/linux-pcap.ts";
@@ -17,6 +18,13 @@ import {
   matchesLinuxProcessName,
   parseProcNetTable,
 } from "../src/backend/capture/linux-target-provider.ts";
+import {
+  automaticCaptureRouteChanged,
+  captureHealthWarning,
+  isAutomaticCaptureCandidate,
+  parseProcDefaultRoute,
+  parseProcIpv6DefaultRoute,
+} from "../src/backend/capture/platform-capture.ts";
 
 const PROC_HEADER =
   "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
@@ -60,44 +68,121 @@ describe("Linux target discovery", () => {
 describe("pcap link-type normalization", () => {
   test("maps Linux raw-IP interfaces to the supported raw packet format", () => {
     expect(normalizeDataLinkForPacketCapture(101)).toBe(12);
+    expect(normalizeDataLinkForPacketCapture(228)).toBe(12);
+    expect(normalizeDataLinkForPacketCapture(229)).toBe(12);
+    expect(normalizeDataLinkForPacketCapture(276)).toBe(12);
     expect(normalizeDataLinkForPacketCapture(12)).toBe(12);
     expect(normalizeDataLinkForPacketCapture(113)).toBe(113);
   });
 
-  test("keeps VPN and tunnel adapters available for Linux capture selection", () => {
-    const devices = [
-      {
-        name: "enp3s0",
-        description: "enp3s0",
-        addresses: ["192.168.1.10"],
+  test("strips Linux cooked-v2 headers before raw-IP decoding", () => {
+    const frame = Buffer.concat([Buffer.alloc(20, 0xaa), Buffer.from([0x45, 0, 0, 20])]);
+    expect(normalizeCapturedFrame(frame, 276)).toEqual(
+      Buffer.from([0x45, 0, 0, 20]),
+    );
+    expect(normalizeCapturedFrame(frame, 1)).toBe(frame);
+  });
+});
+
+describe("VPN-aware capture routing", () => {
+  const ethernet = {
+    name: "enp3s0",
+    description: "Ethernet",
+    addresses: ["192.168.1.10"],
+    loopback: false,
+  };
+  const tunnel = {
+    name: "tailscale0",
+    description: "Tailscale Tunnel",
+    addresses: ["100.100.107.15"],
+    loopback: false,
+  };
+
+  test("selects the lowest-metric active IPv4 default route", () => {
+    const table = [
+      "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask",
+      "enp3s0\t00000000\t0101A8C0\t0003\t0\t0\t600\t00000000",
+      "tailscale0\t00000000\t00000000\t0001\t0\t0\t50\t00000000",
+    ].join("\n");
+    expect(parseProcDefaultRoute(table)).toBe("tailscale0");
+  });
+
+  test("falls back to the lowest-metric active IPv6 default route", () => {
+    const zero = "0".repeat(32);
+    const table = [
+      `${zero} 00 ${zero} 00 ${zero} 00000064 00000000 00000000 00000001 enp3s0`,
+      `${zero} 00 ${zero} 00 ${zero} 0000000a 00000000 00000000 00000001 tun0`,
+    ].join("\n");
+    expect(parseProcIpv6DefaultRoute(table)).toBe("tun0");
+  });
+
+  test("excludes loopback and link-local adapters from Automatic", () => {
+    expect(isAutomaticCaptureCandidate(ethernet)).toBe(true);
+    expect(isAutomaticCaptureCandidate(tunnel)).toBe(true);
+    expect(
+      isAutomaticCaptureCandidate({
+        name: "stale-tap",
+        description: "Inactive TAP",
+        addresses: ["169.254.20.4", "fe80::1"],
         loopback: false,
-      },
-      {
-        name: "tailscale0",
-        description: "tailscale0",
-        addresses: ["100.100.107.15"],
-        loopback: false,
-      },
-      {
-        name: "wg0",
-        description: "WireGuard",
-        addresses: ["10.0.0.2"],
-        loopback: false,
-      },
-      {
+      }),
+    ).toBe(false);
+    expect(
+      isAutomaticCaptureCandidate({
         name: "lo",
-        description: "lo",
+        description: "Loopback",
         addresses: ["127.0.0.1"],
         loopback: true,
-      },
-    ];
+      }),
+    ).toBe(false);
+  });
 
-    expect(devices.map((device) => device.name)).toEqual([
-      "enp3s0",
-      "tailscale0",
-      "wg0",
-      "lo",
-    ]);
+  test("restarts only Automatic capture when the routed adapter changes", () => {
+    expect(automaticCaptureRouteChanged(true, ethernet.name, tunnel.name)).toBe(
+      true,
+    );
+    expect(automaticCaptureRouteChanged(false, ethernet.name, tunnel.name)).toBe(
+      false,
+    );
+    expect(
+      automaticCaptureRouteChanged(true, tunnel.name, tunnel.name),
+    ).toBe(false);
+  });
+
+  test("warns after an active game receives no attributed tunnel traffic", () => {
+    expect(
+      captureHealthWarning({
+        running: true,
+        gameDetected: true,
+        targetActiveAtMs: 1_000,
+        nowMs: 20_999,
+        timeoutMs: 20_000,
+        adapter: tunnel.description,
+      }),
+    ).toBeUndefined();
+    expect(
+      captureHealthWarning({
+        running: true,
+        gameDetected: true,
+        targetActiveAtMs: 1_000,
+        nowMs: 21_000,
+        timeoutMs: 20_000,
+        adapter: tunnel.description,
+      }),
+    ).toBe(
+      "Spirit Vale is running, but no attributed game traffic reached Tailscale Tunnel. A VPN or route optimizer such as ExitLag may be using another adapter; select its active adapter below.",
+    );
+    expect(
+      captureHealthWarning({
+        running: true,
+        gameDetected: true,
+        targetActiveAtMs: 1_000,
+        lastAttributedPacketAtMs: 1_001,
+        nowMs: 30_000,
+        timeoutMs: 20_000,
+        adapter: tunnel.description,
+      }),
+    ).toBeUndefined();
   });
 });
 

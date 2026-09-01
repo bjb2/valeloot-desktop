@@ -249,9 +249,8 @@ export class LinuxPcapRuntime {
         throw new Error(
           `libpcap could not activate ${device.description}: ${pcapError(api, handle)}`,
         );
-      const dataLink = normalizeDataLinkForPacketCapture(
-        api.symbols.pcap_datalink(handle),
-      );
+      const rawDataLink = api.symbols.pcap_datalink(handle);
+      const dataLink = normalizeDataLinkForPacketCapture(rawDataLink);
       const program = new Uint8Array(16);
       if (
         api.symbols.pcap_compile(
@@ -288,7 +287,7 @@ export class LinuxPcapRuntime {
         filter,
         dataLink,
       });
-      return new DirectPcapSession(api, handle, device, dataLink);
+      return new DirectPcapSession(api, handle, device, rawDataLink);
     } catch (error) {
       api.symbols.pcap_close(handle);
       throw error;
@@ -366,12 +365,16 @@ export class LinuxPcapRuntime {
 class DirectPcapSession implements CaptureSession {
   private closed = false;
 
+  readonly dataLink: number;
+
   constructor(
     private readonly api: PcapLibrary,
     private readonly handle: Pointer,
     readonly device: CaptureDeviceRecord,
-    readonly dataLink: number,
-  ) {}
+    private readonly rawDataLink: number,
+  ) {
+    this.dataLink = normalizeDataLinkForPacketCapture(rawDataLink);
+  }
 
   nextPacket(): CapturedPacketRecord | undefined {
     if (this.closed) return undefined;
@@ -399,20 +402,24 @@ class DirectPcapSession implements CaptureSession {
       throw new Error(
         `libpcap returned an oversized packet (${capturedLength} bytes)`,
       );
-    return {
-      capturedAt: new Date(
-        Number(seconds) * 1_000 + Math.floor(Number(microseconds) / 1_000),
+    const packetData = Buffer.from(
+      new Uint8Array(
+        toArrayBuffer(data, 0, capturedLength),
+        0,
+        capturedLength,
       ),
-      timestampTicks: seconds * 10_000_000n + microseconds * 10n,
-      data: Buffer.from(
-        new Uint8Array(
-          toArrayBuffer(data, 0, capturedLength),
-          0,
-          capturedLength,
+    );
+    return normalizedPacketRecord(
+      {
+        capturedAt: new Date(
+          Number(seconds) * 1_000 + Math.floor(Number(microseconds) / 1_000),
         ),
-      ),
-      originalLength,
-    };
+        timestampTicks: seconds * 10_000_000n + microseconds * 10n,
+        data: packetData,
+        originalLength,
+      },
+      this.rawDataLink,
+    );
   }
 
   close(): void {
@@ -540,6 +547,7 @@ export class PcapStreamDecoder {
   private littleEndian = true;
   private nanosecondTimestamps = false;
   dataLink?: number;
+  private rawDataLink?: number;
 
   feed(chunk: Buffer): CapturedPacketRecord[] {
     if (chunk.length > 0)
@@ -560,15 +568,22 @@ export class PcapStreamDecoder {
       const microseconds = this.nanosecondTimestamps
         ? Math.floor(fraction / 1_000)
         : fraction;
-      packets.push({
-        capturedAt: new Date(
-          seconds * 1_000 + Math.floor(microseconds / 1_000),
+      packets.push(
+        normalizedPacketRecord(
+          {
+            capturedAt: new Date(
+              seconds * 1_000 + Math.floor(microseconds / 1_000),
+            ),
+            timestampTicks:
+              BigInt(seconds) * 10_000_000n + BigInt(microseconds) * 10n,
+            data: Buffer.from(
+              this.buffer.subarray(16, 16 + capturedLength),
+            ),
+            originalLength,
+          },
+          this.rawDataLink!,
         ),
-        timestampTicks:
-          BigInt(seconds) * 10_000_000n + BigInt(microseconds) * 10n,
-        data: Buffer.from(this.buffer.subarray(16, 16 + capturedLength)),
-        originalLength,
-      });
+      );
       this.buffer = this.buffer.subarray(16 + capturedLength);
     }
     return packets;
@@ -582,10 +597,10 @@ export class PcapStreamDecoder {
       this.littleEndian = false;
     else throw new Error("dumpcap returned an invalid pcap stream");
     this.nanosecondTimestamps = magic === "4d3cb2a1" || magic === "a1b23c4d";
-    const rawDataLink = this.littleEndian
+    this.rawDataLink = this.littleEndian
       ? this.buffer.readUInt32LE(20)
       : this.buffer.readUInt32BE(20);
-    this.dataLink = normalizeDataLinkForPacketCapture(rawDataLink);
+    this.dataLink = normalizeDataLinkForPacketCapture(this.rawDataLink);
     this.buffer = this.buffer.subarray(24);
     return true;
   }
@@ -598,12 +613,31 @@ export class PcapStreamDecoder {
 }
 
 export function normalizeDataLinkForPacketCapture(dataLink: number): number {
-  // Linux TUN/TAP interfaces such as tailscale0 often expose raw IP frames with
-  // the libpcap LINKTYPE_RAW value 101. The upstream capture runtime only
-  // recognizes the canonical raw-IP DLT value 12, so normalize the Linux alias to
-  // the format it can decode.
-  if (dataLink === 101) return 12;
+  // libpcap savefiles use LINKTYPE values while live sessions expose DLT
+  // values. The shared decoder expects DLT_RAW (12), so normalize raw IPv4,
+  // raw IPv6, and Linux cooked-v2 inputs to that canonical value.
+  if (dataLink === 101 || dataLink === 228 || dataLink === 229 || dataLink === 276) {
+    return 12;
+  }
   return dataLink;
+}
+
+export function normalizeCapturedFrame(data: Buffer, dataLink: number): Buffer {
+  if (dataLink !== 276) return data;
+  return data.length >= 20 ? data.subarray(20) : Buffer.alloc(0);
+}
+
+function normalizedPacketRecord(
+  packet: CapturedPacketRecord,
+  dataLink: number,
+): CapturedPacketRecord {
+  if (dataLink !== 276) return packet;
+  const data = normalizeCapturedFrame(packet.data, dataLink);
+  return {
+    ...packet,
+    data,
+    originalLength: Math.max(0, packet.originalLength - 20),
+  };
 }
 
 export function findDumpcap(): string | undefined {

@@ -10,7 +10,20 @@ import { LootSession } from "../core/loot-session.ts";
 import { parseLootFilter } from "../core/filter/loot-dsl.ts";
 import { consumeFishNetPacket } from "../core/packet-consumer.ts";
 import { FishNetCaptureDecoder } from "./fishnet-capture-decoder.ts";
-import { captureBackendName, createPacketCapture, getCaptureStatus, getLinuxCaptureMode, listCaptureDevices, setLinuxCaptureMode } from "./capture/platform-capture.ts";
+import {
+  automaticCaptureRouteChanged,
+  captureBackendName,
+  captureHealthWarning as buildCaptureHealthWarning,
+  createPacketCapture,
+  getCaptureStatus,
+  getLinuxCaptureMode,
+  isAutomaticCaptureCandidate,
+  listCaptureDevices,
+  resolveCaptureDevice,
+  setLinuxCaptureMode,
+  type ResolvedCaptureDevice,
+} from "./capture/platform-capture.ts";
+import type { CaptureDeviceRecord } from "./capture/linux-pcap.ts";
 import { canonicalSoundName, findCustomSound, listCustomSounds, SOUND_NAMES, SOUND_WAVS } from "./sounds.ts";
 
 type Persisted = {
@@ -145,6 +158,14 @@ let partialSnapshots = 0;
 let duplicateSnapshots = 0;
 let bagGeneratedAt: string | null = null;
 let bagCoverage = "No inventory snapshot yet";
+let resolvedCaptureDevice: CaptureDeviceRecord | undefined;
+let captureHealthWarning: string | undefined;
+let lastAttributedPacketAt: string | undefined;
+let lastAttributedPacketAtMs: number | undefined;
+let targetActiveAtMs: number | undefined;
+let automaticCaptureRestarts = 0;
+let routeCheckRunning = false;
+let routeMonitor: NodeJS.Timeout | undefined;
 const fishNetDecoder = new FishNetCaptureDecoder({
   onPacket: (packet) => {
     packetsObserved++;
@@ -164,13 +185,96 @@ const fishNetDecoder = new FishNetCaptureDecoder({
   },
 });
 
-async function restartCapture(): Promise<void> {
-  diagnostics.info("Restarting packet capture", { enabled: persisted.enabled, requestedDevice: persisted.deviceName });
-  await capture?.stop().catch((error) => diagnostics.warn("Previous packet capture did not stop cleanly", { error: formatError(error) }));
-  fishNetDecoder.reset();
+const CAPTURE_HEALTH_TIMEOUT_MS = 20_000;
+const ROUTE_CHECK_INTERVAL_MS = 5_000;
+
+interface CaptureRestartOptions {
+  preserveDecoder?: boolean;
+  reason?: "settings" | "manual" | "route-change" | "startup";
+}
+
+let captureRestartChain: Promise<void> = Promise.resolve();
+
+function adapterLabel(device = resolvedCaptureDevice): string {
+  return device?.description || device?.name || "the selected adapter";
+}
+
+async function resolveDesiredCaptureDevice(): Promise<
+  ResolvedCaptureDevice & { device: CaptureDeviceRecord }
+> {
+  const devices = await listCaptureDevices();
+  const automaticCandidates = devices.filter(isAutomaticCaptureCandidate);
+  if (persisted.deviceName !== null) {
+    const requested = devices.find(
+      (device) => device.name === persisted.deviceName,
+    );
+    if (requested) {
+      return { device: requested, usedFallback: false };
+    }
+    const fallback = await resolveCaptureDevice(automaticCandidates);
+    if (!fallback.device) {
+      throw new Error(
+        "The saved capture adapter is unavailable and no active fallback adapter was found",
+      );
+    }
+    return {
+      device: fallback.device,
+      usedFallback: true,
+      detail:
+        "The saved adapter is unavailable; capture is using the active default-route adapter",
+    };
+  }
+  const resolution = await resolveCaptureDevice(automaticCandidates);
+  if (!resolution.device) {
+    throw new Error("No active capture adapter with a routable address was found");
+  }
+  return {
+    ...resolution,
+    device: resolution.device,
+  };
+}
+
+function scheduleCaptureRestart(
+  options: CaptureRestartOptions = {},
+): Promise<void> {
+  const scheduled = captureRestartChain
+    .catch((error) => {
+      diagnostics.error("Previous capture restart failed", {
+        error: formatError(error),
+      });
+    })
+    .then(() => restartCapture(options));
+  captureRestartChain = scheduled;
+  return scheduled;
+}
+
+async function restartCapture(
+  options: CaptureRestartOptions = {},
+): Promise<void> {
+  const preserveDecoder = options.preserveDecoder === true;
+  const previousGameDetected = gameDetected;
+  diagnostics.info("Restarting packet capture", {
+    enabled: persisted.enabled,
+    requestedDevice: persisted.deviceName,
+    preserveDecoder,
+    reason: options.reason ?? "manual",
+  });
+  await capture
+    ?.stop()
+    .catch((error) =>
+      diagnostics.warn("Previous packet capture did not stop cleanly", {
+        error: formatError(error),
+      }),
+    );
+  if (!preserveDecoder) fishNetDecoder.reset();
   capture = undefined;
-  gameDetected = false;
-  activeConnectionId = undefined;
+  resolvedCaptureDevice = undefined;
+  captureHealthWarning = undefined;
+  if (!preserveDecoder) {
+    gameDetected = false;
+    activeConnectionId = undefined;
+    targetActiveAtMs = undefined;
+  }
   warning = undefined;
 
   if (!persisted.enabled) {
@@ -181,7 +285,10 @@ async function restartCapture(): Promise<void> {
   }
 
   try {
-    captureStatus = { backend: captureBackendName(), ...(await getCaptureStatus()) };
+    captureStatus = {
+      backend: captureBackendName(),
+      ...(await getCaptureStatus()),
+    };
   } catch (error) {
     captureStatus = {
       backend: captureBackendName(),
@@ -198,69 +305,208 @@ async function restartCapture(): Promise<void> {
   }
 
   try {
-    diagnostics.debug("Creating packet capture pipeline");
+    const resolution = await resolveDesiredCaptureDevice();
+    resolvedCaptureDevice = resolution.device;
+    if (resolution.usedFallback && resolution.detail) {
+      warning = resolution.detail;
+    }
+    diagnostics.debug("Creating packet capture pipeline", {
+      adapter: adapterLabel(),
+      selection: persisted.deviceName === null ? "automatic" : "manual",
+      usedFallback: resolution.usedFallback,
+    });
     const nextCapture = createPacketCapture();
     nextCapture.on("targetStatus", (status: CaptureTargetStatus) => {
+      const wasDetected = gameDetected;
       gameDetected = status.state === "active";
+      if (wasDetected !== gameDetected) {
+        targetActiveAtMs = gameDetected ? Date.now() : undefined;
+        if (!gameDetected) captureHealthWarning = undefined;
+      }
       phase = gameDetected ? "capturing" : "waiting-for-game";
-      detail = gameDetected ? "Spirit Vale detected" : "Waiting for Spirit Vale";
+      detail = gameDetected
+        ? `Spirit Vale detected on ${adapterLabel()}`
+        : `Waiting for Spirit Vale on ${adapterLabel()}`;
       diagnostics.info("Target process status changed", { status });
       if (!gameDetected) activeConnectionId = undefined;
     });
     nextCapture.on("connection", (event: CaptureConnectionEvent) => {
       diagnostics.info("Game connection state changed", { event });
       if (event.state === "opened") {
-        if (activeConnectionId !== event.connectionId) session.resetCharacter();
+        if (activeConnectionId !== event.connectionId) {
+          session.resetCharacter();
+        }
         activeConnectionId = event.connectionId;
-        detail = "Spirit Vale connection observed";
+        detail = `Spirit Vale connection observed on ${adapterLabel()}`;
       } else if (activeConnectionId === event.connectionId) {
         activeConnectionId = undefined;
-        detail = gameDetected ? "Waiting for Spirit Vale to reconnect" : "Waiting for Spirit Vale";
+        detail = gameDetected
+          ? `Waiting for Spirit Vale to reconnect on ${adapterLabel()}`
+          : `Waiting for Spirit Vale on ${adapterLabel()}`;
       }
     });
-    nextCapture.on("liteNetPacket", (packet) => fishNetDecoder.consume(packet));
+    nextCapture.on("liteNetPacket", (packet) => {
+      const observedAt = new Date();
+      lastAttributedPacketAt = observedAt.toISOString();
+      lastAttributedPacketAtMs = observedAt.getTime();
+      captureHealthWarning = undefined;
+      fishNetDecoder.consume(packet);
+    });
     nextCapture.on("warning", (message: string) => {
       diagnostics.warn("Packet capture warning", { message });
       warning = message;
-      const duplicateMatch = /(?:suppressed|ignored)\s+(\d+)\s+duplicate/i.exec(message);
-      if (duplicateMatch?.[1]) duplicateSnapshots += Number.parseInt(duplicateMatch[1], 10);
+      const duplicateMatch =
+        /(?:suppressed|ignored)\s+(\d+)\s+duplicate/i.exec(message);
+      if (duplicateMatch?.[1]) {
+        duplicateSnapshots += Number.parseInt(duplicateMatch[1], 10);
+      }
     });
     nextCapture.on("error", (error: Error) => {
+      if (capture === nextCapture) capture = undefined;
       phase = "error";
       detail = error.message;
-      diagnostics.error("Packet capture error", { error: formatError(error) });
+      diagnostics.error("Packet capture error", {
+        error: formatError(error),
+      });
     });
-    diagnostics.info("Starting packet capture", { protocols: ["udp"], targetProcessName: "SpiritVale.exe", requestedDevice: persisted.deviceName });
+    diagnostics.info("Starting packet capture", {
+      protocols: ["udp"],
+      targetProcessName: "SpiritVale.exe",
+      requestedDevice: persisted.deviceName,
+      resolvedDevice: resolution.device.name,
+    });
     await nextCapture.start({
       protocols: ["udp"],
       targetProcessName: "SpiritVale.exe",
       decodeLiteNetLib: true,
-      ...(persisted.deviceName ? { deviceName: persisted.deviceName } : {}),
+      deviceName: resolution.device.name,
     });
     capture = nextCapture;
+    if (preserveDecoder && previousGameDetected) {
+      gameDetected = true;
+      targetActiveAtMs = Date.now();
+    }
     phase = gameDetected ? "capturing" : "waiting-for-game";
-    detail = gameDetected ? "Spirit Vale detected" : "Waiting for Spirit Vale";
-    diagnostics.info("Packet capture started", { phase, detail });
+    detail = gameDetected
+      ? `Spirit Vale detected on ${adapterLabel()}`
+      : `Waiting for Spirit Vale on ${adapterLabel()}`;
+    diagnostics.info("Packet capture started", {
+      phase,
+      detail,
+      adapter: adapterLabel(),
+      selection: persisted.deviceName === null ? "automatic" : "manual",
+    });
   } catch (error) {
     phase = "error";
     detail = error instanceof Error ? error.message : String(error);
-    diagnostics.error("Packet capture startup failed", { error: formatError(error) });
+    diagnostics.error("Packet capture startup failed", {
+      error: formatError(error),
+    });
   }
 }
 
+function updateCaptureHealth(): void {
+  const nextWarning = buildCaptureHealthWarning({
+    running: capture !== undefined,
+    gameDetected,
+    ...(targetActiveAtMs === undefined ? {} : { targetActiveAtMs }),
+    ...(lastAttributedPacketAtMs === undefined
+      ? {}
+      : { lastAttributedPacketAtMs }),
+    nowMs: Date.now(),
+    timeoutMs: CAPTURE_HEALTH_TIMEOUT_MS,
+    adapter: adapterLabel(),
+  });
+  if (nextWarning && nextWarning !== captureHealthWarning) {
+    diagnostics.warn("Capture health detected no attributed traffic", {
+      adapter: adapterLabel(),
+      automaticDevice: persisted.deviceName === null,
+    });
+  }
+  captureHealthWarning = nextWarning;
+}
+
+async function checkAutomaticCaptureDevice(): Promise<void> {
+  updateCaptureHealth();
+  if (
+    capture === undefined ||
+    persisted.deviceName !== null ||
+    captureStatus.availability !== "ready"
+  ) {
+    return;
+  }
+  const resolution = await resolveDesiredCaptureDevice();
+  if (
+    !automaticCaptureRouteChanged(
+      true,
+      resolvedCaptureDevice?.name,
+      resolution.device.name,
+    )
+  ) {
+    return;
+  }
+  const previous = resolvedCaptureDevice;
+  automaticCaptureRestarts += 1;
+  diagnostics.info("Automatic capture route changed", {
+    from: adapterLabel(previous),
+    to: adapterLabel(resolution.device),
+    restart: automaticCaptureRestarts,
+  });
+  await scheduleCaptureRestart({
+    preserveDecoder: gameDetected,
+    reason: "route-change",
+  });
+}
+
+function startRouteMonitor(): void {
+  if (routeMonitor !== undefined) return;
+  routeMonitor = setInterval(() => {
+    if (routeCheckRunning) return;
+    routeCheckRunning = true;
+    void checkAutomaticCaptureDevice()
+      .catch((error) =>
+        diagnostics.warn("Automatic capture route check failed", {
+          error: formatError(error),
+        }),
+      )
+      .finally(() => {
+        routeCheckRunning = false;
+      });
+  }, ROUTE_CHECK_INTERVAL_MS);
+  routeMonitor.unref();
+}
+
 function currentState(): DesktopState {
-  const stateWarning = warning;
+  const stateWarning = captureHealthWarning ?? warning;
   return {
     version: applicationVersion,
     enabled: persisted.enabled,
     soundsEnabled: persisted.soundsEnabled,
     deviceName: persisted.deviceName,
     linuxCaptureMode: persisted.linuxCaptureMode,
+    ...(resolvedCaptureDevice === undefined
+      ? {}
+      : {
+          captureAdapter: {
+            name: resolvedCaptureDevice.name,
+            description: adapterLabel(),
+            selection:
+              persisted.deviceName === null
+                ? ("automatic" as const)
+                : ("manual" as const),
+            automaticCandidate:
+              isAutomaticCaptureCandidate(resolvedCaptureDevice),
+          },
+        }),
     phase,
     detail,
     capture: captureStatus,
     gameDetected,
     packetsObserved,
+    ...(lastAttributedPacketAt === undefined
+      ? {}
+      : { lastAttributedPacketAt }),
+    automaticCaptureRestarts,
     snapshotsDecoded,
     partialSnapshots,
     duplicateSnapshots,
@@ -338,7 +584,27 @@ async function routeRequest(request: Request): Promise<Response> {
   if (method === "GET" && route === "/v1/state") return Response.json(currentState());
   if (method === "GET" && route === "/v1/devices") {
     if (captureStatus.availability !== "ready") return Response.json([]);
-    return Response.json(await listCaptureDevices().catch(() => []));
+    const devices = await listCaptureDevices().catch(() => []);
+    return Response.json(
+      devices
+        .map((device) => ({
+          ...device,
+          automaticCandidate: isAutomaticCaptureCandidate(device),
+        }))
+        .sort((left, right) => {
+          const selectedOrder =
+            Number(right.name === resolvedCaptureDevice?.name) -
+            Number(left.name === resolvedCaptureDevice?.name);
+          if (selectedOrder !== 0) return selectedOrder;
+          const candidateOrder =
+            Number(right.automaticCandidate) -
+            Number(left.automaticCandidate);
+          if (candidateOrder !== 0) return candidateOrder;
+          return (left.description || left.name).localeCompare(
+            right.description || right.name,
+          );
+        }),
+    );
   }
   if (method === "GET" && route === "/v1/history") return Response.json(session.history());
   if (method === "DELETE" && route === "/v1/history") {
@@ -405,7 +671,9 @@ async function routeRequest(request: Request): Promise<Response> {
       setLinuxCaptureMode(update.linuxCaptureMode);
     }
     saveSettings(persisted);
-    if (restartNeeded) await restartCapture();
+    if (restartNeeded) {
+      await scheduleCaptureRestart({ reason: "settings" });
+    }
     return Response.json(currentState());
   }
   if (method === "PUT" && route === "/v1/filter") {
@@ -463,7 +731,7 @@ async function routeRequest(request: Request): Promise<Response> {
     return Response.json(currentState());
   }
   if (method === "POST" && route === "/v1/capture/restart") {
-    await restartCapture();
+    await scheduleCaptureRestart({ reason: "manual" });
     return Response.json(currentState());
   }
   return errorResponse("not found", 404);
@@ -511,6 +779,10 @@ async function shutdown(): Promise<void> {
   stopping = true;
   diagnostics.info("Collector shutdown requested", { packetsObserved, snapshotsDecoded, partialSnapshots, duplicateSnapshots });
   server.stop(true);
+  if (routeMonitor !== undefined) {
+    clearInterval(routeMonitor);
+    routeMonitor = undefined;
+  }
   await capture?.stop().catch((error) => diagnostics.warn("Packet capture did not stop cleanly during shutdown", { error: formatError(error) }));
   diagnostics.info("Collector shutdown completed");
 }
@@ -519,7 +791,8 @@ process.on("SIGTERM", () => void shutdown());
 process.on("uncaughtException", (error) => diagnostics.error("Uncaught collector exception", { error: formatError(error) }));
 process.on("unhandledRejection", (error) => diagnostics.error("Unhandled collector rejection", { error: formatError(error) }));
 
-await restartCapture();
+await scheduleCaptureRestart({ reason: "startup" });
+startRouteMonitor();
 diagnostics.info("Collector HTTP server ready", { port: listeningPort, capture: captureStatus, phase });
 process.stderr.write(`[valeloot] collector ready on 127.0.0.1:${listeningPort}\n`);
 process.stdout.write(serializeCollectorMessage({ type: "ready", port: listeningPort }));

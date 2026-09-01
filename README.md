@@ -60,6 +60,14 @@ Diagnostic logs**. `desktop.log` records Electron and renderer lifecycle events;
 errors, and shutdown. Each log rotates at 5 MiB and retains one previous file.
 
 
+Automatic adapter selection follows the operating system's active default route
+and restarts capture when that route moves, including when a VPN connects or
+disconnects. If Spirit Vale is detected but no attributed traffic arrives for
+20 seconds, Settings identifies the selected adapter and prompts you to choose
+the active VPN or route-optimizer adapter manually. This matches ValeMarket's
+VPN-aware capture behavior; ExitLag compatibility still depends on its relayed
+game flow remaining attributable to `SpiritVale.exe`.
+
 Start ValeLoot before starting Spirit Vale when possible, so capture observes
 the session setup as well as inventory updates.
 
