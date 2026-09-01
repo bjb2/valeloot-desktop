@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import {
   findDumpcap,
   normalizeDataLinkForPacketCapture,
@@ -172,7 +172,7 @@ describe("Linux capture mode configuration", () => {
     try {
       writeFileSync(dumpcapPath, "#!/bin/sh\nexit 0\n");
       chmodSync(dumpcapPath, 0o755);
-      process.env.PATH = `${tempDir}:${previousPath ?? ""}`;
+      process.env.PATH = [tempDir, previousPath].filter(Boolean).join(delimiter);
       delete process.env.VALELOOT_DUMPCAP;
 
       expect(findDumpcap()).toBe(dumpcapPath);

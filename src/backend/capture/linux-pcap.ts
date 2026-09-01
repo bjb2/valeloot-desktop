@@ -9,7 +9,7 @@ import {
 } from "bun:ffi";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import type { Readable } from "node:stream";
 import type { LinuxCaptureMode } from "../../shared/contracts.ts";
 import {
@@ -611,7 +611,7 @@ export function findDumpcap(): string | undefined {
   if (requested) return existsSync(requested) ? requested : undefined;
 
   const priorityDirectories = new Set<string>();
-  for (const entry of (process.env.PATH ?? "").split(":")) {
+  for (const entry of (process.env.PATH ?? "").split(delimiter)) {
     const trimmed = entry.trim();
     if (trimmed) priorityDirectories.add(trimmed);
   }
