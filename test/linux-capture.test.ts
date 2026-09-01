@@ -1,29 +1,104 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findDumpcap, PcapStreamDecoder } from "../src/backend/capture/linux-pcap.ts";
-import { matchesLinuxProcessName, parseProcNetTable } from "../src/backend/capture/linux-target-provider.ts";
+import {
+  filterVirtualCaptureDevices,
+  findDumpcap,
+  isVirtualCaptureDevice,
+  normalizeDataLinkForPacketCapture,
+  PcapStreamDecoder,
+} from "../src/backend/capture/linux-pcap.ts";
+import {
+  matchesLinuxProcessName,
+  parseProcNetTable,
+} from "../src/backend/capture/linux-target-provider.ts";
 
-const PROC_HEADER = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+const PROC_HEADER =
+  "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
 
 describe("Linux target discovery", () => {
   test("recognizes a Wine executable from comm or a Windows-style command line", () => {
-    expect(matchesLinuxProcessName("SpiritVale.exe", "SpiritVale.exe\n", "")).toBe(true);
-    expect(matchesLinuxProcessName("SpiritVale.exe", "wine64-preloader\n", "Z:\\Games\\Spirit Vale\\SpiritVale.exe\0--launcher\0")).toBe(true);
-    expect(matchesLinuxProcessName("SpiritVale.exe", "other.exe\n", "wine64\0Z:\\Games\\Other.exe\0")).toBe(false);
+    expect(
+      matchesLinuxProcessName("SpiritVale.exe", "SpiritVale.exe\n", ""),
+    ).toBe(true);
+    expect(
+      matchesLinuxProcessName(
+        "SpiritVale.exe",
+        "wine64-preloader\n",
+        "Z:\\Games\\Spirit Vale\\SpiritVale.exe\0--launcher\0",
+      ),
+    ).toBe(true);
+    expect(
+      matchesLinuxProcessName(
+        "SpiritVale.exe",
+        "other.exe\n",
+        "wine64\0Z:\\Games\\Other.exe\0",
+      ),
+    ).toBe(false);
   });
 
   test("maps owned IPv4 and IPv6 socket inodes to capture endpoints", () => {
     const ipv4 = `${PROC_HEADER}  4: 0100007F:C350 00000000:0000 07 00000000:00000000 00:00000000 00000000 1000 0 4242\n`;
     const ipv6 = `${PROC_HEADER}  5: 00000000000000000000000001000000:1770 00000000000000000000000000000000:0000 07 00000000:00000000 00:00000000 00000000 1000 0 4343\n`;
 
-    expect(parseProcNetTable("udp", false, ipv4, 77, new Set(["4242"]))).toEqual([
+    expect(
+      parseProcNetTable("udp", false, ipv4, 77, new Set(["4242"])),
+    ).toEqual([
       { protocol: "udp", address: "127.0.0.1", port: 50_000, processId: 77 },
     ]);
-    expect(parseProcNetTable("udp", true, ipv6, 77, new Set(["4343"]))).toEqual([
-      { protocol: "udp", address: "::1", port: 6_000, processId: 77 },
-    ]);
+    expect(parseProcNetTable("udp", true, ipv6, 77, new Set(["4343"]))).toEqual(
+      [{ protocol: "udp", address: "::1", port: 6_000, processId: 77 }],
+    );
+  });
+});
+
+describe("pcap link-type normalization", () => {
+  test("maps Linux raw-IP interfaces to the supported raw packet format", () => {
+    expect(normalizeDataLinkForPacketCapture(101)).toBe(12);
+    expect(normalizeDataLinkForPacketCapture(12)).toBe(12);
+    expect(normalizeDataLinkForPacketCapture(113)).toBe(113);
+  });
+
+  test("keeps VPN and tunnel adapters available for Linux capture selection", () => {
+    const devices = [
+      {
+        name: "enp3s0",
+        description: "enp3s0",
+        addresses: ["192.168.1.10"],
+        loopback: false,
+      },
+      {
+        name: "tailscale0",
+        description: "tailscale0",
+        addresses: ["100.100.107.15"],
+        loopback: false,
+      },
+      {
+        name: "wg0",
+        description: "WireGuard",
+        addresses: ["10.0.0.2"],
+        loopback: false,
+      },
+      {
+        name: "lo",
+        description: "lo",
+        addresses: ["127.0.0.1"],
+        loopback: true,
+      },
+    ];
+
+    expect(isVirtualCaptureDevice(devices[1]!)).toBe(false);
+    expect(isVirtualCaptureDevice(devices[2]!)).toBe(false);
+    expect(
+      filterVirtualCaptureDevices(devices).map((device) => device.name),
+    ).toEqual(["enp3s0", "tailscale0", "wg0", "lo"]);
   });
 });
 
@@ -47,7 +122,9 @@ describe("dumpcap pcap stream", () => {
 
     expect(decoder.dataLink).toBe(1);
     expect(packets).toHaveLength(1);
-    expect(packets[0]?.capturedAt.toISOString()).toBe("1970-01-01T00:00:01.250Z");
+    expect(packets[0]?.capturedAt.toISOString()).toBe(
+      "1970-01-01T00:00:01.250Z",
+    );
     expect(packets[0]?.timestampTicks).toBe(12_500_000n);
     expect(packets[0]?.data).toEqual(Buffer.from([1, 2, 3]));
     expect(packets[0]?.originalLength).toBe(5);
@@ -56,8 +133,9 @@ describe("dumpcap pcap stream", () => {
 
 describe("Linux capture mode configuration", () => {
   test("toggles mode and updates captureBackendName", async () => {
-    const { getLinuxCaptureMode, setLinuxCaptureMode, captureBackendName } = await import("../src/backend/capture/platform-capture.ts");
-    
+    const { getLinuxCaptureMode, setLinuxCaptureMode, captureBackendName } =
+      await import("../src/backend/capture/platform-capture.ts");
+
     // Set auto
     setLinuxCaptureMode("auto");
     expect(getLinuxCaptureMode()).toBe("auto");
