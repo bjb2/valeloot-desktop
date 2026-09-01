@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { CString, dlopen, FFIType, read, toArrayBuffer, type Library, type Pointer } from "bun:ffi";
 import { createDiagnosticLogger, formatError } from "../../shared/diagnostics.ts";
+import type { LinuxCaptureMode } from "../../shared/contracts.ts";
 
 export interface CaptureBackendStatus {
   availability: "ready" | "missing" | "error";
@@ -61,6 +63,11 @@ type PcapLibrary = Library<typeof PCAP_SYMBOLS>;
 export class LinuxPcapRuntime {
   private api?: PcapLibrary;
   private readyStatus?: CaptureBackendStatus;
+  private captureMode: LinuxCaptureMode;
+
+  constructor(captureMode: LinuxCaptureMode = "auto") {
+    this.captureMode = captureMode;
+  }
 
   async status(): Promise<CaptureBackendStatus> {
     if (this.readyStatus) return this.readyStatus;
@@ -72,12 +79,19 @@ export class LinuxPcapRuntime {
       const devices = this.enumerateDevices(api);
       if (devices.length === 0) return { availability: "error", detail: "libpcap reported no captureable network adapters", version };
       const dumpcap = findDumpcap();
-      this.readyStatus = {
-        availability: "ready",
-        detail: dumpcap ? "libpcap is ready through the privileged dumpcap helper" : "libpcap is ready; packet access requires CAP_NET_RAW and CAP_NET_ADMIN",
-        version,
-      };
-      diagnostics.info("Linux capture backend ready", { version, deviceCount: devices.length, dumpcap });
+      let detail: string;
+      if (this.captureMode === "dumpcap") {
+        detail = dumpcap ? "dumpcap mode active" : "dumpcap was not found; install Wireshark or set VALELOOT_DUMPCAP";
+        if (!dumpcap) {
+          return { availability: "error", detail };
+        }
+      } else if (this.captureMode === "libpcap") {
+        detail = "direct libpcap mode active; packet access requires CAP_NET_RAW and CAP_NET_ADMIN";
+      } else {
+        detail = dumpcap ? "libpcap is ready through the privileged dumpcap helper" : "libpcap is ready; packet access requires CAP_NET_RAW and CAP_NET_ADMIN";
+      }
+      this.readyStatus = { availability: "ready", detail, version };
+      diagnostics.info("Linux capture backend ready", { version, deviceCount: devices.length, dumpcap, captureMode: this.captureMode });
       return this.readyStatus;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -99,8 +113,16 @@ export class LinuxPcapRuntime {
     const status = await this.status();
     if (status.availability !== "ready") throw new Error(status.detail);
     const dumpcap = findDumpcap();
-    diagnostics.info("Opening Linux capture device", { device, filter, mode: dumpcap ? "dumpcap" : "direct-libpcap" });
-    if (dumpcap) return DumpcapSession.open(dumpcap, device, filter);
+    const effectiveMode = this.captureMode === "dumpcap"
+      ? "dumpcap"
+      : this.captureMode === "libpcap"
+        ? "direct-libpcap"
+        : dumpcap ? "dumpcap" : "direct-libpcap";
+    diagnostics.info("Opening Linux capture device", { device, filter, mode: effectiveMode, captureMode: this.captureMode });
+    if (effectiveMode === "dumpcap") {
+      if (!dumpcap) throw new Error("dumpcap capture mode is selected but dumpcap was not found; install Wireshark or set VALELOOT_DUMPCAP");
+      return DumpcapSession.open(dumpcap, device, filter);
+    }
     return this.openDirect(device, filter);
   }
 
@@ -354,10 +376,43 @@ export class PcapStreamDecoder {
   }
 }
 
-function findDumpcap(): string | undefined {
+export function findDumpcap(): string | undefined {
   const requested = process.env.VALELOOT_DUMPCAP;
   if (requested) return existsSync(requested) ? requested : undefined;
-  return ["/usr/bin/dumpcap", "/usr/sbin/dumpcap"].find((candidate) => existsSync(candidate));
+
+  const priorityDirectories = new Set<string>();
+  for (const entry of (process.env.PATH ?? "").split(":")) {
+    const trimmed = entry.trim();
+    if (trimmed) priorityDirectories.add(trimmed);
+  }
+
+  const homeDir = process.env.HOME;
+  if (homeDir) {
+    priorityDirectories.add(join(homeDir, ".linuxbrew", "bin"));
+    priorityDirectories.add(join(homeDir, "bin"));
+    priorityDirectories.add(join(homeDir, ".local", "bin"));
+  }
+  for (const entry of [
+    "/home/linuxbrew/.linuxbrew/bin",
+    "/home/linuxbrew/.linuxbrew/sbin",
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/usr/bin",
+    "/usr/sbin",
+    "/bin",
+    "/sbin",
+  ]) {
+    priorityDirectories.add(entry);
+  }
+
+  for (const directory of priorityDirectories) {
+    const candidate = join(directory, "dumpcap");
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return undefined;
 }
 
 function readAddresses(head: Pointer | null): string[] {

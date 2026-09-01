@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { PcapStreamDecoder } from "../src/backend/capture/linux-pcap.ts";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { findDumpcap, PcapStreamDecoder } from "../src/backend/capture/linux-pcap.ts";
 import { matchesLinuxProcessName, parseProcNetTable } from "../src/backend/capture/linux-target-provider.ts";
 
 const PROC_HEADER = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
@@ -48,5 +51,85 @@ describe("dumpcap pcap stream", () => {
     expect(packets[0]?.timestampTicks).toBe(12_500_000n);
     expect(packets[0]?.data).toEqual(Buffer.from([1, 2, 3]));
     expect(packets[0]?.originalLength).toBe(5);
+  });
+});
+
+describe("Linux capture mode configuration", () => {
+  test("toggles mode and updates captureBackendName", async () => {
+    const { getLinuxCaptureMode, setLinuxCaptureMode, captureBackendName } = await import("../src/backend/capture/platform-capture.ts");
+    
+    // Set auto
+    setLinuxCaptureMode("auto");
+    expect(getLinuxCaptureMode()).toBe("auto");
+    if (process.platform === "linux") {
+      expect(captureBackendName()).toBe("libpcap");
+    }
+
+    // Set dumpcap
+    expect(setLinuxCaptureMode("dumpcap")).toBe(true);
+    expect(getLinuxCaptureMode()).toBe("dumpcap");
+    if (process.platform === "linux") {
+      expect(captureBackendName()).toBe("dumpcap");
+    }
+
+    // Setting same mode returns false
+    expect(setLinuxCaptureMode("dumpcap")).toBe(false);
+
+    // Set libpcap
+    expect(setLinuxCaptureMode("libpcap")).toBe(true);
+    expect(getLinuxCaptureMode()).toBe("libpcap");
+    if (process.platform === "linux") {
+      expect(captureBackendName()).toBe("libpcap (direct)");
+    }
+
+    // Reset back to auto
+    setLinuxCaptureMode("auto");
+  });
+
+  test("finds dumpcap from PATH when it is not in the default system directories", () => {
+    const previousPath = process.env.PATH;
+    const previousOverride = process.env.VALELOOT_DUMPCAP;
+    const tempDir = mkdtempSync(join(tmpdir(), "valeloot-dumpcap-"));
+    const dumpcapPath = join(tempDir, "dumpcap");
+
+    try {
+      writeFileSync(dumpcapPath, "#!/bin/sh\nexit 0\n");
+      chmodSync(dumpcapPath, 0o755);
+      process.env.PATH = `${tempDir}:${previousPath ?? ""}`;
+      delete process.env.VALELOOT_DUMPCAP;
+
+      expect(findDumpcap()).toBe(dumpcapPath);
+    } finally {
+      process.env.PATH = previousPath;
+      if (previousOverride === undefined) delete process.env.VALELOOT_DUMPCAP;
+      else process.env.VALELOOT_DUMPCAP = previousOverride;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("finds Homebrew dumpcap in common install directories", () => {
+    const previousHome = process.env.HOME;
+    const previousPath = process.env.PATH;
+    const previousOverride = process.env.VALELOOT_DUMPCAP;
+    const tempHome = mkdtempSync(join(tmpdir(), "valeloot-home-"));
+    const homebrewBin = join(tempHome, ".linuxbrew", "bin");
+    const dumpcapPath = join(homebrewBin, "dumpcap");
+
+    try {
+      mkdirSync(homebrewBin, { recursive: true });
+      writeFileSync(dumpcapPath, "#!/bin/sh\nexit 0\n");
+      chmodSync(dumpcapPath, 0o755);
+      process.env.HOME = tempHome;
+      process.env.PATH = "";
+      delete process.env.VALELOOT_DUMPCAP;
+
+      expect(findDumpcap()).toBe(dumpcapPath);
+    } finally {
+      process.env.HOME = previousHome;
+      process.env.PATH = previousPath;
+      if (previousOverride === undefined) delete process.env.VALELOOT_DUMPCAP;
+      else process.env.VALELOOT_DUMPCAP = previousOverride;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
   });
 });
