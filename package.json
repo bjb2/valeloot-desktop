@@ -1,8 +1,9 @@
 {
   "name": "valeloot-desktop",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
-  "description": "Passive Npcap desktop loot filter for Spirit Vale",
+  "description": "Passive cross-platform Spirit Vale loot filter",
+  "desktopName": "valeloot-desktop",
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
@@ -11,12 +12,15 @@
   "homepage": "https://github.com/bjb2/valeloot-desktop#readme",
   "bugs": "https://github.com/bjb2/valeloot-desktop/issues",
   "type": "module",
+  "main": "build/electron/main.js",
   "scripts": {
-    "setup": "bun install && neu update",
+    "setup": "bun install",
     "prepare": "bun run src/build.ts",
-    "dev": "bun run prepare && neu build && neu run",
-    "build": "bun run prepare && neu build",
-    "package": "bun run prepare && neu build --clean --release && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
+    "dev": "bun run prepare && electron .",
+    "build": "bun run prepare",
+    "package": "bun run prepare && electron-builder",
+    "package:win": "bun run prepare && electron-builder --win portable",
+    "package:linux": "bun run prepare && electron-builder --linux AppImage",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run typecheck && bun test"
@@ -25,16 +29,54 @@
     "@kar-mi/spirit-vale-tools-capture": "2.7.0",
     "@kar-mi/spirit-vale-tools-items": "0.1.9",
     "@kar-mi/spirit-vale-tools-market": "2.0.0",
-    "@neutralinojs/lib": "6.9.0",
     "preact": "10.29.7"
   },
   "devDependencies": {
-    "@neutralinojs/neu": "11.7.2",
     "@types/bun": "1.4.0",
+    "electron": "44.1.0",
+    "electron-builder": "26.15.3",
     "typescript": "7.0.2"
   },
+  "trustedDependencies": [
+    "electron"
+  ],
   "engines": {
     "bun": ">=1.4.0"
   },
-  "packageManager": "bun@1.4.0"
+  "packageManager": "bun@1.4.0",
+  "build": {
+    "appId": "dev.spiritvale.valeloot",
+    "productName": "ValeLoot Desktop",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "build/electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/collector",
+        "to": "collector"
+      },
+      {
+        "from": "build/renderer",
+        "to": "renderer"
+      },
+      "LICENSE",
+      "NOTICE",
+      "SOURCE-OFFER.txt"
+    ],
+    "win": {
+      "target": ["portable"],
+      "artifactName": "ValeLoot-Desktop-${version}-windows-${arch}.${ext}"
+    },
+    "linux": {
+      "syncDesktopName": true,
+      "target": ["AppImage"],
+      "category": "Utility",
+      "artifactName": "ValeLoot-Desktop-${version}-linux-${arch}.${ext}"
+    }
+  }
 }

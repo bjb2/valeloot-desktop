@@ -1,15 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { CaptureConnectionEvent, CaptureTargetStatus } from "@kar-mi/spirit-vale-tools-capture";
-import { getNpcapStatus, listNpcapDevices, PacketCapture } from "@kar-mi/spirit-vale-tools-capture/capture";
-import type { NpcapStatus } from "@kar-mi/spirit-vale-tools-capture/capture";
+import type { PacketCapture } from "@kar-mi/spirit-vale-tools-capture/capture";
+import { serializeCollectorMessage } from "../shared/collector-protocol.ts";
 import type { DesktopSettingsUpdate, DesktopState, ProfileCommand } from "../shared/contracts.ts";
 import { DESKTOP_API_PORT } from "../shared/contracts.ts";
+import { createDiagnosticLogger, formatError } from "../shared/diagnostics.ts";
 import { LootSession } from "../core/loot-session.ts";
 import { parseLootFilter } from "../core/filter/loot-dsl.ts";
 import { consumeFishNetPacket } from "../core/packet-consumer.ts";
 import { FishNetCaptureDecoder } from "./fishnet-capture-decoder.ts";
-import { NeutralinoClient } from "./neutralino-client.ts";
+import { captureBackendName, createPacketCapture, getCaptureStatus, listCaptureDevices } from "./capture/platform-capture.ts";
 import { canonicalSoundName, findCustomSound, listCustomSounds, SOUND_NAMES, SOUND_WAVS } from "./sounds.ts";
 
 type Persisted = {
@@ -21,18 +22,33 @@ type Persisted = {
   profiles: Record<string, string>;
 };
 
-const root = path.resolve(import.meta.dir, "../..");
-const applicationVersion = (() => {
-  const config = JSON.parse(readFileSync(path.join(root, "neutralino.config.json"), "utf8")) as { version?: unknown };
-  if (typeof config.version !== "string" || !config.version) {
-    throw new Error("neutralino.config.json does not contain an application version.");
+const root = path.resolve(process.env.VALELOOT_APP_ROOT ?? path.resolve(import.meta.dir, "../.."));
+const applicationVersion = process.env.VALELOOT_VERSION ?? (() => {
+  const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { version?: unknown };
+  if (typeof packageJson.version !== "string" || !packageJson.version) {
+    throw new Error("package.json does not contain an application version.");
   }
-  return config.version;
+  return packageJson.version;
 })();
 const portable = existsSync(path.join(root, ".valeloot-portable"));
-const dataDirectory = portable
-  ? path.join(root, "data")
-  : path.join(process.env.LOCALAPPDATA ?? root, "ValeLoot Desktop");
+const defaultDataRoot = process.platform === "win32"
+  ? process.env.LOCALAPPDATA
+  : process.env.XDG_CONFIG_HOME ?? (process.env.HOME ? path.join(process.env.HOME, ".config") : undefined);
+const dataDirectory = path.resolve(process.env.VALELOOT_DATA_DIR
+  ?? (portable ? path.join(root, "data") : path.join(defaultDataRoot ?? root, "ValeLoot Desktop")));
+const rendererDirectory = path.resolve(process.env.VALELOOT_RENDERER_DIR ?? path.join(root, "resources", "views", "main"));
+const logsDirectory = path.join(dataDirectory, "logs");
+const diagnostics = createDiagnosticLogger("collector", process.env.VALELOOT_LOG_FILE ?? path.join(logsDirectory, "collector.log"));
+diagnostics.info("Collector process starting", {
+  version: applicationVersion,
+  platform: process.platform,
+  arch: process.arch,
+  pid: process.pid,
+  root,
+  dataDirectory,
+  rendererDirectory,
+  captureBackend: captureBackendName(),
+});
 const settingsPath = path.join(dataDirectory, "settings.json");
 const soundsDirectory = path.join(dataDirectory, "sounds");
 const iconDirectory = existsSync(path.join(import.meta.dir, "icons"))
@@ -89,7 +105,6 @@ function saveSettings(value: Persisted): void {
 }
 
 let persisted = loadSettings();
-let nativeClient: NeutralinoClient | undefined;
 const session = new LootSession({
   soundsEnabled: () => persisted.soundsEnabled,
   onSound: async (sound) => {
@@ -97,12 +112,9 @@ const session = new LootSession({
     const builtin = requested?.toLowerCase();
     const custom = builtin && !Object.hasOwn(SOUND_WAVS, builtin) ? findCustomSound(soundsDirectory, builtin) : null;
     const name = builtin && Object.hasOwn(SOUND_WAVS, builtin) ? builtin : custom?.name;
-    if (!nativeClient || !name) return false;
+    if (!name) return false;
     try {
-      await nativeClient.call("app.broadcast", {
-        event: "valeLootPlaySound",
-        data: { name },
-      });
+      process.stdout.write(serializeCollectorMessage({ type: "play-sound", name }));
       return true;
     } catch (error) {
       warning = `Could not dispatch alert sound: ${error instanceof Error ? error.message : String(error)}`;
@@ -112,7 +124,11 @@ const session = new LootSession({
 });
 session.setFilter(persisted.filter);
 
-let npcap: NpcapStatus = { availability: "missing", detail: "Checking Npcap" };
+let captureStatus: DesktopState["capture"] = {
+  backend: captureBackendName(),
+  availability: "missing",
+  detail: `Checking ${captureBackendName()}`,
+};
 let capture: PacketCapture | undefined;
 let phase: DesktopState["phase"] = "disabled";
 let detail = "Capture disabled";
@@ -138,11 +154,15 @@ const fishNetDecoder = new FishNetCaptureDecoder({
       ? "Partial snapshot merged with last complete bag"
       : "Complete inventory snapshot";
   },
-  onWarning: (message) => { warning = message; },
+  onWarning: (message) => {
+    warning = message;
+    diagnostics.warn("FishNet decoder warning", { message });
+  },
 });
 
 async function restartCapture(): Promise<void> {
-  await capture?.stop().catch(() => undefined);
+  diagnostics.info("Restarting packet capture", { enabled: persisted.enabled, requestedDevice: persisted.deviceName });
+  await capture?.stop().catch((error) => diagnostics.warn("Previous packet capture did not stop cleanly", { error: formatError(error) }));
   fishNetDecoder.reset();
   capture = undefined;
   gameDetected = false;
@@ -152,32 +172,39 @@ async function restartCapture(): Promise<void> {
   if (!persisted.enabled) {
     phase = "disabled";
     detail = "Capture disabled";
+    diagnostics.info("Packet capture remains disabled by settings");
     return;
   }
 
   try {
-    npcap = await getNpcapStatus();
+    captureStatus = { backend: captureBackendName(), ...(await getCaptureStatus()) };
   } catch (error) {
-    npcap = {
+    captureStatus = {
+      backend: captureBackendName(),
       availability: "error",
       detail: error instanceof Error ? error.message : String(error),
     };
   }
-  if (npcap.availability !== "ready") {
-    phase = "npcap-unavailable";
-    detail = npcap.detail;
+  diagnostics.info("Capture backend status resolved", { ...captureStatus });
+  if (captureStatus.availability !== "ready") {
+    phase = "capture-unavailable";
+    detail = captureStatus.detail;
+    diagnostics.warn("Capture backend unavailable", { ...captureStatus });
     return;
   }
 
   try {
-    const nextCapture = new PacketCapture();
+    diagnostics.debug("Creating packet capture pipeline");
+    const nextCapture = createPacketCapture();
     nextCapture.on("targetStatus", (status: CaptureTargetStatus) => {
       gameDetected = status.state === "active";
       phase = gameDetected ? "capturing" : "waiting-for-game";
       detail = gameDetected ? "Spirit Vale detected" : "Waiting for Spirit Vale";
+      diagnostics.info("Target process status changed", { status });
       if (!gameDetected) activeConnectionId = undefined;
     });
     nextCapture.on("connection", (event: CaptureConnectionEvent) => {
+      diagnostics.info("Game connection state changed", { event });
       if (event.state === "opened") {
         if (activeConnectionId !== event.connectionId) session.resetCharacter();
         activeConnectionId = event.connectionId;
@@ -189,6 +216,7 @@ async function restartCapture(): Promise<void> {
     });
     nextCapture.on("liteNetPacket", (packet) => fishNetDecoder.consume(packet));
     nextCapture.on("warning", (message: string) => {
+      diagnostics.warn("Packet capture warning", { message });
       warning = message;
       const duplicateMatch = /(?:suppressed|ignored)\s+(\d+)\s+duplicate/i.exec(message);
       if (duplicateMatch?.[1]) duplicateSnapshots += Number.parseInt(duplicateMatch[1], 10);
@@ -196,7 +224,9 @@ async function restartCapture(): Promise<void> {
     nextCapture.on("error", (error: Error) => {
       phase = "error";
       detail = error.message;
+      diagnostics.error("Packet capture error", { error: formatError(error) });
     });
+    diagnostics.info("Starting packet capture", { protocols: ["udp"], targetProcessName: "SpiritVale.exe", requestedDevice: persisted.deviceName });
     await nextCapture.start({
       protocols: ["udp"],
       targetProcessName: "SpiritVale.exe",
@@ -206,9 +236,11 @@ async function restartCapture(): Promise<void> {
     capture = nextCapture;
     phase = gameDetected ? "capturing" : "waiting-for-game";
     detail = gameDetected ? "Spirit Vale detected" : "Waiting for Spirit Vale";
+    diagnostics.info("Packet capture started", { phase, detail });
   } catch (error) {
     phase = "error";
     detail = error instanceof Error ? error.message : String(error);
+    diagnostics.error("Packet capture startup failed", { error: formatError(error) });
   }
 }
 
@@ -221,7 +253,7 @@ function currentState(): DesktopState {
     deviceName: persisted.deviceName,
     phase,
     detail,
-    npcap,
+    capture: captureStatus,
     gameDetected,
     packetsObserved,
     snapshotsDecoded,
@@ -243,6 +275,7 @@ function currentState(): DesktopState {
     history: session.history(),
     sounds: [...SOUND_NAMES, ...listCustomSounds(soundsDirectory).map((sound) => sound.name)],
     soundsDirectory,
+    logsDirectory,
     ...(stateWarning ? { warning: stateWarning } : {}),
   };
 }
@@ -276,11 +309,31 @@ async function routeRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const method = request.method;
   const route = url.pathname;
+  if (method === "GET") {
+    const asset = route === "/" || route === "/index.html"
+      ? { filename: "index.html", contentType: "text/html; charset=utf-8" }
+      : route === "/index.js"
+        ? { filename: "index.js", contentType: "text/javascript; charset=utf-8" }
+        : route === "/index.css"
+          ? { filename: "index.css", contentType: "text/css; charset=utf-8" }
+          : undefined;
+    if (asset) {
+      const file = Bun.file(path.join(rendererDirectory, asset.filename));
+      if (!await file.exists()) return errorResponse("desktop renderer is missing", 500);
+      return new Response(file, {
+        headers: {
+          "cache-control": "no-cache",
+          "content-type": asset.contentType,
+        },
+      });
+    }
+  }
+
 
   if (method === "GET" && route === "/v1/state") return Response.json(currentState());
   if (method === "GET" && route === "/v1/devices") {
-    if (npcap.availability !== "ready") return Response.json([]);
-    return Response.json(await listNpcapDevices().catch(() => []));
+    if (captureStatus.availability !== "ready") return Response.json([]);
+    return Response.json(await listCaptureDevices().catch(() => []));
   }
   if (method === "GET" && route === "/v1/history") return Response.json(session.history());
   if (method === "DELETE" && route === "/v1/history") {
@@ -439,31 +492,30 @@ const server = Bun.serve({
     }
   },
 });
+const listeningPort = server.port ?? DESKTOP_API_PORT;
 
 let stopping = false;
 async function shutdown(): Promise<void> {
   if (stopping) return;
   stopping = true;
+  diagnostics.info("Collector shutdown requested", { packetsObserved, snapshotsDecoded, partialSnapshots, duplicateSnapshots });
   server.stop(true);
-  await capture?.stop().catch(() => undefined);
+  await capture?.stop().catch((error) => diagnostics.warn("Packet capture did not stop cleanly during shutdown", { error: formatError(error) }));
+  diagnostics.info("Collector shutdown completed");
 }
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
+process.on("uncaughtException", (error) => diagnostics.error("Uncaught collector exception", { error: formatError(error) }));
+process.on("unhandledRejection", (error) => diagnostics.error("Unhandled collector rejection", { error: formatError(error) }));
 
 await restartCapture();
-console.log(`[valeloot] backend ready on 127.0.0.1:${server.port}`);
+diagnostics.info("Collector HTTP server ready", { port: listeningPort, capture: captureStatus, phase });
+process.stderr.write(`[valeloot] collector ready on 127.0.0.1:${listeningPort}\n`);
+process.stdout.write(serializeCollectorMessage({ type: "ready", port: listeningPort }));
 
 if (!process.stdin.isTTY) {
-  try {
-    nativeClient = await NeutralinoClient.fromStdin();
-    nativeClient.onClose(() => void shutdown());
-    await nativeClient.call("app.broadcast", {
-      event: "valeLootBackendReady",
-      data: { port: server.port },
-    });
-  } catch (error) {
-    console.error(`[valeloot] Neutralino bootstrap failed: ${error instanceof Error ? error.message : String(error)}`);
-    await shutdown();
-    process.exitCode = 1;
-  }
+  process.stdin.resume();
+  process.stdin.once("end", () => {
+    void shutdown().then(() => { process.exitCode = 0; });
+  });
 }

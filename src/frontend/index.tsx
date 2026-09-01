@@ -1,5 +1,4 @@
 import { render } from "preact";
-import { events, init as initNeutralino } from "@neutralinojs/lib";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import {
@@ -14,8 +13,6 @@ import {
 
 const apiRoot = `http://127.0.0.1:${DESKTOP_API_PORT}`;
 type Surface = "bag" | "filters" | "history" | "settings";
-const neutralinoAvailable = typeof (window as Window & { NL_TOKEN?: unknown }).NL_TOKEN === "string";
-if (neutralinoAvailable) initNeutralino();
 
 function App() {
   const [state, setState] = useState<DesktopState>();
@@ -80,8 +77,8 @@ function App() {
   }, [filterDirty, state?.filter.text]);
 
   useEffect(() => {
-    if (state?.npcap.availability === "ready") void loadDevices();
-  }, [loadDevices, state?.npcap.availability]);
+    if (state?.capture.availability === "ready") void loadDevices();
+  }, [loadDevices, state?.capture.availability]);
 
   useEffect(() => {
     if (surface === "history") void loadHistory();
@@ -94,17 +91,13 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!neutralinoAvailable) return;
-    const playAlert = (event: CustomEvent) => {
-      const detail = event.detail as { name?: unknown } | undefined;
-      if (typeof detail?.name !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(detail.name)) return;
-      const audio = new Audio(`${apiRoot}/v1/sounds/${encodeURIComponent(detail.name)}.wav`);
+    return window.valeLoot?.onAlert((name) => {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)) return;
+      const audio = new Audio(`${apiRoot}/v1/sounds/${encodeURIComponent(name)}.wav`);
       void audio.play().catch((error) => {
         setActionError(`Alert sound could not be played: ${errorMessage(error)}`);
       });
-    };
-    void events.on("valeLootPlaySound", playAlert);
-    return () => { void events.off("valeLootPlaySound", playAlert); };
+    });
   }, []);
 
   const selected = state?.bag.find((item) => item.uid === selectedUid);
@@ -224,7 +217,7 @@ function BagSurface({ state, error, query, matchesOnly, items, selected, busy, o
       <div class="ledger-head"><span>Item</span><span>Notable rolls</span><span>Rule</span><span>Rolls</span></div>
       {error && !state ? <Empty title="Collector unavailable" detail={`ValeLoot could not reach its local service. ${error}`} action="Reconnect" onAction={onRetry} />
         : !state ? <Empty title="Connecting to collector" detail="Waiting for the local capture service to report its inventory state." />
-        : state.phase === "npcap-unavailable" ? <Empty title="Npcap is needed to observe the bag" detail="Open Settings to review the Npcap status, then install or repair Npcap before restarting capture." />
+        : state.phase === "capture-unavailable" ? <Empty title={`${state.capture.backend} is needed to observe the bag`} detail={`Open Settings to review the ${state.capture.backend} status, then install or repair the capture backend before restarting capture.`} />
         : state.phase === "disabled" ? <Empty title="Capture is paused" detail="Enable passive capture in Settings to watch the next bag snapshot." />
         : state.bag.length === 0 ? <Empty title="No items observed yet" detail={state.phase === "waiting-for-game" ? "Launch Spirit Vale and enter a character. The first complete bag snapshot is silent." : "Keep the game open and change inventory to let ValeLoot observe a complete bag snapshot."} />
         : items.length === 0 ? <Empty title="No items match this view" detail={matchesOnly ? "No current item matches your active filter. Switch to All to inspect the bag." : "Try a shorter search term or clear the search."} action={matchesOnly && !query ? "Show all" : "Clear search"} onAction={() => { if (matchesOnly && !query) onMatchesOnly(false); else onQuery(""); }} />
@@ -303,10 +296,10 @@ function HistorySurface({ history, loading, busy, onClear, onReload }: { history
 
 function SettingsSurface({ state, devices, busy, onUpdate, onRestart }: { state: DesktopState | undefined; devices: CaptureDevice[]; busy: string | undefined; onUpdate(update: DesktopSettingsUpdate): void; onRestart(): void }) {
   return <>
-    <SurfaceHeader eyebrow="Collector · local configuration" title="Settings" freshness={state ? state.npcap.detail : "Waiting for local collector"} />
+    <SurfaceHeader eyebrow="Collector · local configuration" title="Settings" freshness={state ? state.capture.detail : "Waiting for local collector"} />
     <div class="settings-layout">
-      <section class="settings-section"><div class="section-heading"><div><div class="section-kicker">Capture controls</div><h2>Passive observation</h2></div><button class="primary-action" type="button" disabled={!state || busy !== undefined} onClick={onRestart}>{busy === "Capture restart failed" ? "Restarting…" : "Restart capture"}</button></div><label class="switch-row"><span><strong>Enable capture</strong><small>Observe inventory packets on the selected local adapter.</small></span><input type="checkbox" role="switch" checked={state?.enabled ?? false} disabled={!state || busy !== undefined} onChange={(event) => onUpdate({ enabled: event.currentTarget.checked })} /></label><label class="switch-row"><span><strong>Play local alerts</strong><small>Play a matched rule’s selected sound once per new item UID.</small></span><input type="checkbox" role="switch" checked={state?.soundsEnabled ?? false} disabled={!state || busy !== undefined} onChange={(event) => onUpdate({ soundsEnabled: event.currentTarget.checked })} /></label><label class="device-field"><span>Network adapter</span><select value={state?.deviceName ?? ""} disabled={!state || busy !== undefined || state.npcap.availability !== "ready"} onChange={(event) => onUpdate({ deviceName: event.currentTarget.value || null })}><option value="">Automatic selection</option>{devices.filter((device) => !device.loopback).map((device) => <option key={device.name} value={device.name}>{device.description || device.name}{device.addresses.length ? ` · ${device.addresses.join(", ")}` : ""}</option>)}</select><small>{state?.npcap.availability === "ready" ? "Choose Automatic to let the collector select an active adapter." : "Adapter selection is available after Npcap is ready."}</small></label></section>
-      <aside class="settings-side"><section class="side-section npcap-state"><div class="section-kicker">Npcap</div><strong>{npcapLabel(state?.npcap.availability)}</strong>{state?.npcap.version && <code>Version {state.npcap.version}</code>}<p>{state?.npcap.detail ?? "Checking Npcap availability."}</p></section><section class="side-section"><div class="section-kicker">Available sounds</div><p>Drop <code>.wav</code> files into this folder. They are detected automatically; use <code>Sound filename</code> with or without the extension.</p><code class="sound-path">{state?.soundsDirectory ?? "Loading sounds folder…"}</code><p><b>{(state?.sounds ?? []).join(", ") || "Loading…"}</b></p></section><section class="side-section privacy-disclosure"><div class="section-kicker">Privacy</div><p>ValeLoot binds only to <code>127.0.0.1:47832</code>. It persists settings and profiles locally, keeps alert history only for the current session, and does not upload data or persist raw packets.</p></section></aside>
+      <section class="settings-section"><div class="section-heading"><div><div class="section-kicker">Capture controls</div><h2>Passive observation</h2></div><button class="primary-action" type="button" disabled={!state || busy !== undefined} onClick={onRestart}>{busy === "Capture restart failed" ? "Restarting…" : "Restart capture"}</button></div><label class="switch-row"><span><strong>Enable capture</strong><small>Observe inventory packets on the selected local adapter.</small></span><input type="checkbox" role="switch" checked={state?.enabled ?? false} disabled={!state || busy !== undefined} onChange={(event) => onUpdate({ enabled: event.currentTarget.checked })} /></label><label class="switch-row"><span><strong>Play local alerts</strong><small>Play a matched rule’s selected sound once per new item UID.</small></span><input type="checkbox" role="switch" checked={state?.soundsEnabled ?? false} disabled={!state || busy !== undefined} onChange={(event) => onUpdate({ soundsEnabled: event.currentTarget.checked })} /></label><label class="device-field"><span>Network adapter</span><select value={state?.deviceName ?? ""} disabled={!state || busy !== undefined || state.capture.availability !== "ready"} onChange={(event) => onUpdate({ deviceName: event.currentTarget.value || null })}><option value="">Automatic selection</option>{devices.filter((device) => !device.loopback).map((device) => <option key={device.name} value={device.name}>{device.description || device.name}{device.addresses.length ? ` · ${device.addresses.join(", ")}` : ""}</option>)}</select><small>{state?.capture.availability === "ready" ? "Choose Automatic to let the collector select an active adapter." : `Adapter selection is available after ${state?.capture.backend ?? "packet capture"} is ready.`}</small></label></section>
+      <aside class="settings-side"><section class="side-section capture-backend-state"><div class="section-kicker">{state?.capture.backend ?? "Packet capture"}</div><strong>{captureAvailabilityLabel(state?.capture.availability)}</strong>{state?.capture.version && <code>Version {state.capture.version}</code>}<p>{state?.capture.detail ?? "Checking packet capture availability."}</p></section><section class="side-section"><div class="section-kicker">Diagnostic logs</div><p>Verbose desktop, collector, capture, connection, warning, and shutdown events are written locally for troubleshooting.</p><code class="sound-path">{state?.logsDirectory ?? "Loading log folder…"}</code></section><section class="side-section"><div class="section-kicker">Available sounds</div><p>Drop <code>.wav</code> files into this folder. They are detected automatically; use <code>Sound filename</code> with or without the extension.</p><code class="sound-path">{state?.soundsDirectory ?? "Loading sounds folder…"}</code><p><b>{(state?.sounds ?? []).join(", ") || "Loading…"}</b></p></section><section class="side-section privacy-disclosure"><div class="section-kicker">Privacy boundary</div><p>Capture is local and passive. ValeLoot reads only traffic owned by <code>SpiritVale.exe</code>; no packet contents, filters, settings, alert history, or diagnostic logs are uploaded.</p></section></aside>
     </div>
   </>;
 }
@@ -320,13 +313,13 @@ function phaseCaption(state?: DesktopState): string {
   switch (state.phase) {
     case "capturing": return `${state.packetsObserved.toLocaleString()} packets observed · ${state.snapshotsDecoded.toLocaleString()} snapshots decoded`;
     case "waiting-for-game": return "Waiting for a Spirit Vale connection.";
-    case "npcap-unavailable": return "Npcap is unavailable. Review Settings.";
+    case "capture-unavailable": return `${state.capture.backend} is unavailable. Review Settings.`;
     case "disabled": return "Capture is disabled in local settings.";
     case "error": return "The collector reported an error. Review Settings.";
   }
 }
 
-function npcapLabel(availability?: DesktopState["npcap"]["availability"]): string {
+function captureAvailabilityLabel(availability?: DesktopState["capture"]["availability"]): string {
   return availability === "ready" ? "Ready" : availability === "missing" ? "Not installed" : availability === "error" ? "Unavailable" : "Checking";
 }
 

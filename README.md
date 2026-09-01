@@ -1,30 +1,55 @@
 # ValeLoot Desktop
 
-ValeLoot Desktop is a Windows x64 desktop loot ledger for **Spirit Vale**. It
-passively observes the game's inventory traffic through Npcap, applies local
-ValeLoot rules, and plays local alert sounds for new matching drops.
+ValeLoot Desktop is a Windows and Linux x64 desktop loot ledger for **Spirit
+Vale**. It passively observes the game's inventory traffic through Npcap on
+Windows or libpcap on Linux, applies local ValeLoot rules, and plays local alert
+sounds for new matching drops.
 
 ![ValeLoot Desktop filter editor and live bag](docs/valeloot-desktop.png)
 
 ## Install and run
 
-### Requirements
+### Windows
+
+Requirements:
 
 - Windows 10 or 11, x64
 - [Npcap](https://npcap.com/#download), installed separately
 - Spirit Vale
 
-Npcap is required for capture and is **not** bundled in ValeLoot Desktop.
-Install it before launching ValeLoot. If Npcap is unavailable, ValeLoot can
-still open its ledger and settings but cannot observe inventory traffic.
+Download `ValeLoot-Desktop-<version>-windows-x64.exe` from the [latest
+release](https://github.com/bjb2/valeloot-desktop/releases/latest) and run it.
+Npcap is not bundled. Without Npcap, ValeLoot still opens its ledger and
+settings but cannot observe inventory traffic.
 
-1. Download the Windows ZIP from the [latest release](https://github.com/bjb2/valeloot-desktop/releases/latest).
-2. Extract the entire archive to a folder you intend to keep.
-3. Run `valeloot-desktop-win_x64.exe`.
+### Linux
 
-Keep the executable, `resources.neu`, `neutralino.config.json`, and
-`extensions` directory together. The app keeps its local settings and profiles
-in its data directory. Alert history is kept only for the current app session.
+Requirements:
+
+- x86-64 Linux with FUSE support for AppImage
+- libpcap and a distribution-configured `dumpcap` helper
+- Spirit Vale running through Wine or Proton
+
+Install your distribution's libpcap and Wireshark/dumpcap packages, configure
+dumpcap for non-root packet capture, then sign out and back in so the group
+change takes effect. On Debian or Ubuntu, install `libpcap0.8` and
+`wireshark-common`, allow non-superusers to capture when prompted, and add your
+account to the `wireshark` group.
+
+Download `ValeLoot-Desktop-<version>-linux-x86_64.AppImage`, make it executable,
+and run it as your normal user. **Do not run the AppImage with `sudo`.** If
+dumpcap is unavailable, ValeLoot tries direct libpcap capture and reports the
+required `CAP_NET_RAW` and `CAP_NET_ADMIN` capabilities when access is denied.
+
+The app keeps settings and profiles in the operating system's application-data
+directory. To keep data beside the executable or AppImage, place an empty
+`.valeloot-portable` file beside it. Alert history is kept only for the current
+app session.
+Verbose diagnostics are written to the folder shown under **Settings →
+Diagnostic logs**. `desktop.log` records Electron and renderer lifecycle events;
+`collector.log` records capture status, target and connection changes, warnings,
+errors, and shutdown. Each log rotates at 5 MiB and retains one previous file.
+
 
 Start ValeLoot before starting Spirit Vale when possible, so capture observes
 the session setup as well as inventory updates.
@@ -48,8 +73,7 @@ A fresh installation creates its `Default` profile from the focused
 physical damage, magic damage, defence, magic defence, and general high rolls
 into visible tiers. Existing settings and profiles are never replaced.
 
-The Windows release also includes `starter-ruleset.txt` beside the executable.
-To restore or customize it:
+The release also includes `starter-ruleset.txt`. To restore or customize it:
 
 1. Open `starter-ruleset.txt`.
 2. Copy its contents into **Filters → Rules · text**.
@@ -212,8 +236,8 @@ Keep that rule last. It is the final line of the shipped starter filter.
 
 ValeLoot is a passive, local-only companion:
 
-- It observes packets through the installed Npcap driver and never writes
-  packets or sends game traffic.
+- It observes packets through the installed Npcap driver on Windows or
+  libpcap/dumpcap on Linux; it never writes packets or sends game traffic.
 - It decodes only the inventory information needed for the local ledger and
   rule alerts; it does not retain raw packets.
 - It does not upload captured data, account identifiers, character details,
@@ -228,44 +252,43 @@ leaving the Spirit Vale client untouched.
 
 ## Build from source
 
-Use a clean Windows x64 checkout with Bun 1.4 or newer and Npcap installed:
-
-```powershell
-bun run setup
-bun run check
-bun run package
-```
-
-`setup` installs the pinned Bun dependencies and downloads/updates the
-Neutralino binaries. `check` runs the TypeScript checks and test suite.
-`package` prepares the browser frontend and Bun backend, produces the
-Neutralino Windows release layout, verifies that its expected outputs are
-current, and writes:
+Use a clean x64 checkout with Bun 1.4 or newer:
 
 ```text
-dist/ValeLoot-Desktop-v<version>-windows-x64.zip
+bun run setup
+bun run check
+bun run package:win      # Windows host
+bun run package:linux    # Linux host
 ```
 
-The release packager refuses missing, mismatched, or stale release outputs;
-it does not emit a partial archive.
+`setup` installs the pinned Bun dependencies. `check` runs the TypeScript
+checks and test suite. Packaging must run on the target operating system
+because each artifact embeds that platform's Bun collector runtime.
+
+The package commands write:
+
+```text
+dist/ValeLoot-Desktop-<version>-windows-x64.exe
+dist/ValeLoot-Desktop-<version>-linux-x86_64.AppImage
+```
 
 ### Useful commands
 
 ```text
-bun run dev       Prepare, build, and launch a development window
-bun run build     Prepare the frontend/backend and build Neutralino
-bun run check     Run TypeScript checks and tests
-bun run package   Build and package the Windows x64 release ZIP
+bun run dev             Prepare and launch an Electron development window
+bun run build           Build the renderer, collector, and Electron shell
+bun run check           Run TypeScript checks and tests
+bun run package:win     Build the Windows x64 portable executable
+bun run package:linux   Build the Linux x64 AppImage
 ```
 
-Generated `resources/`, `extensions/`, `dist/`, and installed dependencies are
-ignored by Git.
+Generated `build/`, `dist/`, and installed dependencies are ignored by Git.
 
 ## Licensing and source
 
 ValeLoot Desktop is licensed under the GNU Affero General Public License,
 version 3 or later. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Each release
-archive includes a `source/` directory containing the corresponding ValeLoot
-Desktop source, exact dependency manifest and lockfile, configuration, and
-build scripts; see [SOURCE-OFFER.txt](SOURCE-OFFER.txt). Npcap is a separately
-licensed dependency and is not included.
+publishes the application Corresponding Source, exact dependency manifest and
+lockfile, and build scripts; see [SOURCE-OFFER.txt](SOURCE-OFFER.txt). Npcap,
+libpcap, and dumpcap are separately licensed system dependencies and are not
+included.

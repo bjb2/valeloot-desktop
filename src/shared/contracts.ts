@@ -1,6 +1,6 @@
 export const DESKTOP_API_PORT = 47832;
 
-export type CollectorPhase = "disabled" | "npcap-unavailable" | "waiting-for-game" | "capturing" | "error";
+export type CollectorPhase = "disabled" | "capture-unavailable" | "waiting-for-game" | "capturing" | "error";
 export type LootKind = "equipment" | "artifact";
 export type LootHighlight = "dot" | "mark" | "glow";
 export type LootBackground = "border" | "fill" | "holo";
@@ -79,7 +79,8 @@ export interface DesktopState {
   deviceName: string | null;
   phase: CollectorPhase;
   detail: string;
-  npcap: {
+  capture: {
+    backend: string;
     availability: "ready" | "missing" | "error";
     detail: string;
     version?: string;
@@ -101,6 +102,7 @@ export interface DesktopState {
   };
   profiles: ProfileView[];
   soundsDirectory: string;
+  logsDirectory: string;
   history: AlertHistoryView[];
   sounds: string[];
   warning?: string;
