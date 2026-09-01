@@ -10,13 +10,14 @@ import { LootSession } from "../core/loot-session.ts";
 import { parseLootFilter } from "../core/filter/loot-dsl.ts";
 import { consumeFishNetPacket } from "../core/packet-consumer.ts";
 import { FishNetCaptureDecoder } from "./fishnet-capture-decoder.ts";
-import { captureBackendName, createPacketCapture, getCaptureStatus, listCaptureDevices } from "./capture/platform-capture.ts";
+import { captureBackendName, createPacketCapture, getCaptureStatus, getLinuxCaptureMode, listCaptureDevices, setLinuxCaptureMode } from "./capture/platform-capture.ts";
 import { canonicalSoundName, findCustomSound, listCustomSounds, SOUND_NAMES, SOUND_WAVS } from "./sounds.ts";
 
 type Persisted = {
   enabled: boolean;
   soundsEnabled: boolean;
   deviceName: string | null;
+  linuxCaptureMode: "auto" | "libpcap" | "dumpcap";
   filter: string;
   active: string;
   profiles: Record<string, string>;
@@ -66,6 +67,7 @@ function defaultSettings(): Persisted {
     enabled: true,
     soundsEnabled: true,
     deviceName: null,
+    linuxCaptureMode: "auto",
     filter: starterFilter,
     active: "Default",
     profiles: { Default: starterFilter },
@@ -88,6 +90,7 @@ function loadSettings(): Persisted {
       enabled: typeof raw.enabled === "boolean" ? raw.enabled : true,
       soundsEnabled: typeof raw.soundsEnabled === "boolean" ? raw.soundsEnabled : true,
       deviceName: raw.deviceName === null || typeof raw.deviceName === "string" ? raw.deviceName : null,
+      linuxCaptureMode: (raw.linuxCaptureMode === "libpcap" || raw.linuxCaptureMode === "dumpcap") ? raw.linuxCaptureMode : "auto",
       filter: profiles[active]!,
       active,
       profiles,
@@ -105,6 +108,7 @@ function saveSettings(value: Persisted): void {
 }
 
 let persisted = loadSettings();
+setLinuxCaptureMode(persisted.linuxCaptureMode);
 const session = new LootSession({
   soundsEnabled: () => persisted.soundsEnabled,
   onSound: async (sound) => {
@@ -251,6 +255,7 @@ function currentState(): DesktopState {
     enabled: persisted.enabled,
     soundsEnabled: persisted.soundsEnabled,
     deviceName: persisted.deviceName,
+    linuxCaptureMode: persisted.linuxCaptureMode,
     phase,
     detail,
     capture: captureStatus,
@@ -385,14 +390,20 @@ async function routeRequest(request: Request): Promise<Response> {
     }
     if ((update.enabled !== undefined && typeof update.enabled !== "boolean")
       || (update.soundsEnabled !== undefined && typeof update.soundsEnabled !== "boolean")
-      || (update.deviceName !== undefined && update.deviceName !== null && typeof update.deviceName !== "string")) {
+      || (update.deviceName !== undefined && update.deviceName !== null && typeof update.deviceName !== "string")
+      || (update.linuxCaptureMode !== undefined && update.linuxCaptureMode !== "auto" && update.linuxCaptureMode !== "libpcap" && update.linuxCaptureMode !== "dumpcap")) {
       return errorResponse("invalid settings");
     }
     const restartNeeded = update.enabled !== undefined && update.enabled !== persisted.enabled
-      || update.deviceName !== undefined && update.deviceName !== persisted.deviceName;
+      || update.deviceName !== undefined && update.deviceName !== persisted.deviceName
+      || (update.linuxCaptureMode !== undefined && update.linuxCaptureMode !== persisted.linuxCaptureMode);
     if (update.enabled !== undefined) persisted.enabled = update.enabled;
     if (update.soundsEnabled !== undefined) persisted.soundsEnabled = update.soundsEnabled;
     if (update.deviceName !== undefined) persisted.deviceName = update.deviceName;
+    if (update.linuxCaptureMode !== undefined) {
+      persisted.linuxCaptureMode = update.linuxCaptureMode;
+      setLinuxCaptureMode(update.linuxCaptureMode);
+    }
     saveSettings(persisted);
     if (restartNeeded) await restartCapture();
     return Response.json(currentState());
