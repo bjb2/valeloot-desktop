@@ -1,6 +1,6 @@
 {
   "name": "valeloot-desktop",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Passive cross-platform Spirit Vale loot filter",
   "desktopName": "valeloot-desktop",
