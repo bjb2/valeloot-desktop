@@ -606,17 +606,6 @@ export function normalizeDataLinkForPacketCapture(dataLink: number): number {
   return dataLink;
 }
 
-export function filterVirtualCaptureDevices(
-  devices: CaptureDeviceRecord[],
-): CaptureDeviceRecord[] {
-  return devices;
-}
-
-export function isVirtualCaptureDevice(device: CaptureDeviceRecord): boolean {
-  void device;
-  return false;
-}
-
 export function findDumpcap(): string | undefined {
   const requested = process.env.VALELOOT_DUMPCAP;
   if (requested) return existsSync(requested) ? requested : undefined;

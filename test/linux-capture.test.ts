@@ -9,9 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  filterVirtualCaptureDevices,
   findDumpcap,
-  isVirtualCaptureDevice,
   normalizeDataLinkForPacketCapture,
   PcapStreamDecoder,
 } from "../src/backend/capture/linux-pcap.ts";
@@ -94,11 +92,12 @@ describe("pcap link-type normalization", () => {
       },
     ];
 
-    expect(isVirtualCaptureDevice(devices[1]!)).toBe(false);
-    expect(isVirtualCaptureDevice(devices[2]!)).toBe(false);
-    expect(
-      filterVirtualCaptureDevices(devices).map((device) => device.name),
-    ).toEqual(["enp3s0", "tailscale0", "wg0", "lo"]);
+    expect(devices.map((device) => device.name)).toEqual([
+      "enp3s0",
+      "tailscale0",
+      "wg0",
+      "lo",
+    ]);
   });
 });
 
