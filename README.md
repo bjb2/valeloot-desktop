@@ -1,5 +1,7 @@
 # ValeLoot Desktop
 
+> **Preferred install:** New users should install [Vale Companion](https://github.com/bjb2/valecompanion/releases/latest), which combines ValeLoot and ValeMarket in one passive desktop application. This standalone ValeLoot repository remains available for existing installations.
+
 ValeLoot Desktop is a Windows and Linux x64 desktop loot ledger for **Spirit
 Vale**. It passively observes the game's inventory traffic through Npcap on
 Windows or libpcap on Linux, applies local ValeLoot rules, and plays local alert
