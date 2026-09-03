@@ -14,8 +14,8 @@
  *   2. Grimoires and the whole inventory are captured, not skipped. They are on the wire already.
  *
  * The payload may legitimately END EARLY (a partial `CharacterCallback_T`). Everything from the
- * skill block onward is therefore read inside a boundary that degrades to `partial: true` rather
- * than throwing away the build we already decoded.
+ * skill block onward is therefore read inside a boundary that preserves fields decoded before the
+ * failure. In particular, `inventory` is assigned only after the complete bag has been decoded.
  */
 
 import { Reader } from './wire.ts';
@@ -105,12 +105,9 @@ export function decodeCharacterData(payload: Uint8Array, options: DecodeOptions 
   } catch (error) {
     snapshot.partial = true;
     /**
-     * WHY it stopped, and how far it got.
-     *
-     * A partial snapshot silently keeps the previous bag, so a decode that dies here looks exactly
-     * like "the game did not send an update" from the outside — and those two have completely
-     * different fixes. Recording the reason is what turned "dismantling does not refresh the grid"
-     * from a guess into a one-line answer.
+     * WHY it stopped, and how far it got. A snapshot can be partial after inventory was completely
+     * decoded because the history counters follow it on the wire. In that case the decoded inventory
+     * remains authoritative; if inventory itself fails, it is never assigned.
      */
     snapshot.partialReason = `${(error as Error).message} @${r.offset}/${payload.length}`;
   }
@@ -181,6 +178,34 @@ export function identifyInventoryPayload(payload: Uint8Array): SaviInventory | n
     const total = inventory.equips.length + inventory.artifacts.length + inventory.cards.length
       + inventory.gems.length + inventory.junks.length + inventory.consumables.length;
     return total > 0 ? inventory : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Current personal-storage completion callback:
+ * request id, two non-negative capacity values, status text, authoritative character inventory,
+ * character version, then authoritative storage inventory. The bundled RPC map still labels wire
+ * hash 62 with its older `PlayerCallback_Storage` name, so validation must follow the wire shape.
+ */
+export function decodePersonalStorageBatchPayload(payload: Uint8Array): SaviInventory | null {
+  if (payload.length < 64) return null;
+  try {
+    const r = new Reader(payload);
+    const requestId = r.string(ID_MAX);
+    const bagCapacity = r.packed();
+    const storageCapacity = r.packed();
+    r.string(4096);
+    const inventory = readInventory(r);
+    const version = r.packed();
+    const storage = readInventory(r);
+    if (!requestId || bagCapacity < 0 || storageCapacity < 0 || version < 0 || !inventory || !storage || r.remaining !== 0) {
+      return null;
+    }
+    const totalItems = (value: SaviInventory): number => value.equips.length + value.artifacts.length
+      + value.cards.length + value.gems.length + value.junks.length + value.consumables.length;
+    return totalItems(inventory) + totalItems(storage) > 0 ? inventory : null;
   } catch {
     return null;
   }

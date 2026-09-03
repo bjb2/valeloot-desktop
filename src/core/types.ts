@@ -105,10 +105,8 @@ export interface SaviSnapshot {
   /** True when the payload ended before the history block (a partial update). */
   partial: boolean;
   /**
-   * Why the decode stopped, when it did.
-   *
-   * A partial snapshot keeps the previous bag, so from the outside a failed decode looks exactly like
-   * the game not sending an update — and the two have completely different fixes.
+   * Why the decode stopped. Fields assigned before that offset remain complete; notably, inventory
+   * is assigned only after the full bag has decoded.
    */
   partialReason?: string;
 }

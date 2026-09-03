@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { artifactFacts, equipmentFacts } from "../src/core/catalog.ts";
 import { LootSession } from "../src/core/loot-session.ts";
-import type { SaviArtifact, SaviEquip, SaviSnapshot, SaviSubstat } from "../src/core/types.ts";
+import type { SaviArtifact, SaviEquip, SaviGem, SaviSnapshot, SaviStack, SaviSubstat } from "../src/core/types.ts";
 
 function equipment(uid: string, substats: Array<SaviSubstat | null> = []): SaviEquip {
   return {
@@ -18,7 +18,20 @@ function equipment(uid: string, substats: Array<SaviSubstat | null> = []): SaviE
   };
 }
 
-function snapshot(items: SaviEquip[], partial = false): SaviSnapshot {
+function gem(uid: string): SaviGem {
+  return {
+    uid,
+    itemId: "AtkSpd Gem",
+    refine: 2,
+    favorite: false,
+  };
+}
+
+function card(count: number): SaviStack {
+  return { itemId: "Abomination", count, favorite: false };
+}
+
+function snapshot(items: SaviEquip[], partial = false, gems: SaviGem[] = [], cards: SaviStack[] = []): SaviSnapshot {
   return {
     schema: 1,
     updateType: 0,
@@ -43,22 +56,63 @@ function snapshot(items: SaviEquip[], partial = false): SaviSnapshot {
     inventory: {
       equips: items,
       artifacts: [],
-      cards: [],
-      gems: [],
+      cards,
+      gems,
       junks: [],
       consumables: [],
     },
   };
 }
 
-test("baseline, additions, removals, re-adds, and partial snapshots", () => {
+test("decoded inventory remains authoritative when the later character tail is partial", () => {
   const session = new LootSession();
   session.consume(snapshot([equipment("a")]));
   expect(session.consume(snapshot([equipment("a"), equipment("b")])).added.map((item) => item.uid)).toEqual(["b"]);
   session.consume(snapshot([equipment("b")]));
   expect(session.consume(snapshot([equipment("b"), equipment("a")])).added.map((item) => item.uid)).toEqual(["a"]);
   session.consume(snapshot([equipment("a")], true));
-  expect(session.bag().map((item) => item.uid).sort()).toEqual(["a", "b"]);
+  expect(session.bag().map((item) => item.uid)).toEqual(["a"]);
+});
+
+test("gems enter the bag and match Gem rules", () => {
+  const session = new LootSession();
+  session.setFilter('Show "gems"\n  Type Gem\n  Tag GEM');
+  session.consume(snapshot([]));
+  const result = session.consume(snapshot([], false, [gem("gem-1")]));
+
+  expect(result.added).toHaveLength(1);
+  expect(result.added[0]).toMatchObject({
+    uid: "gem-1",
+    itemId: "AtkSpd Gem",
+    name: "Tempo Gem",
+    type: "Gem",
+    kind: "gem",
+    refine: 2,
+    match: { tag: "GEM" },
+  });
+  expect(session.bag()).toHaveLength(1);
+});
+
+test("cards enter the bag and repeated stack increases trigger additions", () => {
+  const session = new LootSession();
+  session.setFilter('Show "cards"\n  Type Card\n  Tag CARD');
+  session.consume(snapshot([]));
+
+  const first = session.consume(snapshot([], false, [], [card(1)]));
+  expect(first.added).toHaveLength(1);
+  expect(first.added[0]).toMatchObject({
+    uid: "Abomination:card",
+    itemId: "Abomination",
+    name: "Abomination Card",
+    type: "Card",
+    kind: "card",
+    count: 1,
+    match: { tag: "CARD" },
+  });
+
+  expect(session.consume(snapshot([], false, [], [card(2)])).added).toHaveLength(1);
+  expect(session.consume(snapshot([], false, [], [card(2)])).added).toHaveLength(0);
+  expect(session.bag()[0]?.count).toBe(2);
 });
 
 test("catalog facts use displayed values and preserve chaos slot holes", () => {

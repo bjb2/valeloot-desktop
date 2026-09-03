@@ -170,13 +170,14 @@ const fishNetDecoder = new FishNetCaptureDecoder({
   onPacket: (packet) => {
     packetsObserved++;
     const result = consumeFishNetPacket(packet);
-    if (!result.snapshot) return;
+    if (!result.snapshot && !result.inventory) return;
     snapshotsDecoded++;
-    if (result.snapshot.partial) partialSnapshots++;
-    session.consume(result.snapshot);
+    if (result.snapshot?.partial) partialSnapshots++;
+    if (result.snapshot) session.consume(result.snapshot);
+    else session.consumeInventory(result.inventory!);
     bagGeneratedAt = new Date().toISOString();
-    bagCoverage = result.snapshot.partial
-      ? "Partial snapshot merged with last complete bag"
+    bagCoverage = result.snapshot?.partial
+      ? "Complete inventory; partial character tail"
       : "Complete inventory snapshot";
   },
   onWarning: (message) => {

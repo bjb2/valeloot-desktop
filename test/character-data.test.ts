@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { decodeCharacterData } from "../src/core/character-data.ts";
+import { decodeCharacterData, decodePersonalStorageBatchPayload } from "../src/core/character-data.ts";
 import { Writer } from "../src/core/wire.ts";
 
 test("current CharacterState return fields keep inventory aligned", () => {
@@ -33,7 +33,11 @@ test("current CharacterState return fields keep inventory aligned", () => {
         .packed(0).packed(0).packed(-1)
         .string("bag-uid").packed(0).string(itemId).bool(false);
     })
-    .dict([], () => undefined).dict([], () => undefined).dict([], () => undefined)
+    .dict([], () => undefined).dict([], () => undefined)
+    .dict([["gem-uid", "AtkSpd Gem"]] as const, (itemId) => {
+      writer.objectRef(true)
+        .string("gem-uid").packed(2).string(itemId).bool(false);
+    })
     .dict([], () => undefined).dict([], () => undefined).dict([], () => undefined)
     .packed(0).packed(3600).packed(25).packed(3).packed(2);
 
@@ -43,4 +47,37 @@ test("current CharacterState return fields keep inventory aligned", () => {
   expect(snapshot.mapId).toBe("Nevaris");
   expect(snapshot.partial).toBe(false);
   expect(snapshot.inventory?.equips.map((item) => item.itemId)).toEqual(["ArcaneChest"]);
+  expect(snapshot.inventory?.gems).toEqual([{
+    uid: "gem-uid",
+    itemId: "AtkSpd Gem",
+    refine: 2,
+    favorite: false,
+  }]);
 });
+
+test("personal storage completion exposes the authoritative character inventory", () => {
+  const writer = new Writer();
+  writer.string("storage-request").packed(300).packed(600).string(null);
+  writeCardInventory(writer, 2);
+  writer.packed(17);
+  writeCardInventory(writer, 5);
+
+  expect(decodePersonalStorageBatchPayload(writer.bytes())?.cards).toEqual([{
+    itemId: "Abomination",
+    count: 2,
+    favorite: false,
+  }]);
+});
+
+function writeCardInventory(writer: Writer, count: number): void {
+  writer.objectRef(true)
+    .dict([], () => undefined)
+    .dict([], () => undefined)
+    .dict([["Abomination", count]] as const, (value) => {
+      writer.objectRef(true).packed(value).string("Abomination").bool(false);
+    })
+    .dict([], () => undefined)
+    .dict([], () => undefined)
+    .dict([], () => undefined)
+    .dict([], () => undefined);
+}

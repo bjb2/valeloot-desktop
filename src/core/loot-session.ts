@@ -1,9 +1,9 @@
 import type { AlertHistoryView, LootItemView, LootMatchView } from "../shared/contracts.ts";
-import { artifactFacts, equipmentFacts } from "./catalog.ts";
+import { artifactFacts, cardFacts, equipmentFacts, gemFacts } from "./catalog.ts";
 import { matchLoot, type LootContext, type LootMatch } from "./filter/loot-filter.ts";
 import { parseLootFilter, type ParsedFilter } from "./filter/loot-dsl.ts";
 import type { OwnedGear } from "./filter/types.ts";
-import type { SaviSnapshot } from "./types.ts";
+import type { SaviInventory, SaviSnapshot } from "./types.ts";
 
 export interface LootSessionOptions {
   historyLimit?: number;
@@ -75,7 +75,10 @@ export class LootSession {
   consume(snapshot: SaviSnapshot): SnapshotResult {
     const inventory = snapshot.inventory;
     if (!inventory) return { added: [], baseline: !this.#baseline, partial: true };
+    return this.consumeInventory(inventory, snapshot.partial);
+  }
 
+  consumeInventory(inventory: SaviInventory, partial = false): SnapshotResult {
     const threshold = this.#parsed.threshold ?? 90;
     const next = new Map<string, Entry>();
     for (const item of inventory.equips) {
@@ -86,16 +89,21 @@ export class LootSession {
       const fact = artifactFacts(item, threshold);
       next.set(fact.view.uid, { owned: fact, view: fact.view });
     }
-    if (snapshot.partial) {
-      for (const [uid, entry] of this.#entries) {
-        if (!next.has(uid)) next.set(uid, entry);
-      }
+    for (const item of inventory.cards) {
+      const fact = cardFacts(item);
+      next.set(fact.view.uid, { owned: fact, view: fact.view });
+    }
+    for (const item of inventory.gems) {
+      const fact = gemFacts(item);
+      next.set(fact.view.uid, { owned: fact, view: fact.view });
     }
 
     const baseline = !this.#baseline;
     const added = baseline
       ? []
-      : [...next].filter(([uid]) => !this.#entries.has(uid)).map(([, entry]) => entry);
+      : [...next]
+        .filter(([uid, entry]) => entry.view.count > (this.#entries.get(uid)?.view.count ?? 0))
+        .map(([, entry]) => entry);
     this.#entries.clear();
     for (const [uid, entry] of next) this.#entries.set(uid, entry);
     this.#baseline = true;
@@ -120,7 +128,7 @@ export class LootSession {
         );
       }
     }
-    return { added: views, baseline, partial: snapshot.partial };
+    return { added: views, baseline, partial };
   }
 
   private context(): LootContext {

@@ -4,7 +4,7 @@ import { resolveFishNetItem } from "@kar-mi/spirit-vale-tools-items";
 import { fishNetMarketStatName } from "@kar-mi/spirit-vale-tools-market";
 import type { LootItemView, LootLine } from "../shared/contracts.ts";
 import type { OwnedGear, RollLine } from "./filter/types.ts";
-import { ARTIFACT_SLOT_NAMES, type SaviArtifact, type SaviEquip, type SaviSubstat } from "./types.ts";
+import { ARTIFACT_SLOT_NAMES, type SaviArtifact, type SaviEquip, type SaviGem, type SaviStack, type SaviSubstat } from "./types.ts";
 
 type CatalogEntry = {
   name: string;
@@ -157,6 +157,7 @@ function makeFacts(
       kind,
       icon: exact?.icon ? path.basename(exact.icon) : null,
       refine: item.refine,
+      count: 1,
       favorite: item.favorite,
       hasChaos,
       topRolls,
@@ -179,4 +180,77 @@ export function equipmentFacts(item: SaviEquip, highRollThreshold = 90): Facts {
 
 export function artifactFacts(item: SaviArtifact, highRollThreshold = 90): Facts {
   return makeFacts("artifact", item, highRollThreshold);
+}
+
+export function gemFacts(item: SaviGem): Facts {
+  const exact = exactCatalog[item.itemId];
+  const definition = resolveFishNetItem(5, item.itemId);
+  const uid = item.uid ?? `${item.itemId}:gem`;
+  const name = exact?.name ?? definition?.displayName ?? item.itemId;
+  return {
+    uid,
+    itemId: item.itemId,
+    name,
+    slotType: "Gem",
+    refine: item.refine,
+    lines: [],
+    topRolls: 0,
+    highRolls: 0,
+    avgRollPct: null,
+    favorite: item.favorite,
+    hasChaos: false,
+    ...(definition || exact ? {} : { unknown: true as const }),
+    view: {
+      uid,
+      itemId: item.itemId,
+      name,
+      type: "Gem",
+      kind: "gem",
+      icon: exact?.icon ? path.basename(exact.icon) : null,
+      refine: item.refine,
+      count: 1,
+      favorite: item.favorite,
+      hasChaos: false,
+      topRolls: 0,
+      highRolls: 0,
+      avgRollPct: null,
+      lines: [],
+    },
+  };
+}
+
+export function cardFacts(item: SaviStack): Facts {
+  const exact = exactCatalog[item.itemId];
+  const uid = `${item.itemId}:card`;
+  const name = exact?.name ?? item.itemId;
+  return {
+    uid,
+    itemId: item.itemId,
+    name,
+    slotType: "Card",
+    refine: 0,
+    lines: [],
+    topRolls: 0,
+    highRolls: 0,
+    avgRollPct: null,
+    favorite: item.favorite,
+    hasChaos: false,
+    ...(exact ? {} : { unknown: true as const }),
+    view: {
+      uid,
+      itemId: item.itemId,
+      name,
+      type: "Card",
+      kind: "card",
+      icon: exact?.icon ? path.basename(exact.icon) : null,
+      refine: 0,
+      count: item.count,
+      favorite: item.favorite,
+      hasChaos: false,
+      topRolls: 0,
+      highRolls: 0,
+      avgRollPct: null,
+      lines: [],
+    },
+  };
 }
